@@ -156,3 +156,37 @@ Temporary Items
 
 .idea
 .helloagents
+
+# Node / pnpm dependencies and caches
+node_modules/
+.pnpm-store/
+.vite/
+*.tsbuildinfo
+
+# Frontend build output
+dist/
+
+# Rust build output (keep Cargo.lock for this application)
+target/
+
+# Tauri generated schemas
+/apps/desktop/src-tauri/gen/schemas/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Package manager debug logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment settings; keep shareable templates
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template

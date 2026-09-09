@@ -1,0 +1,12 @@
+[package]
+name="host-core"
+version="0.1.0"
+edition="2024"
+[dependencies]
+omp-rpc={path="../omp-rpc"}
+serde={version="1",features=["derive"]}
+serde_json="1"
+thiserror="2"
+semver="1"
+tokio={version="1",features=["process","io-util","sync","time","rt-multi-thread","macros"]}
+rusqlite={version="0.32",features=["bundled"]}

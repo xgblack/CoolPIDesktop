@@ -1,0 +1,3 @@
+[workspace]
+members = ["apps/desktop/src-tauri", "crates/omp-rpc", "crates/host-core"]
+resolver = "2"
