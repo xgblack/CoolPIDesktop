@@ -4,6 +4,7 @@ use serde::{Serialize,Deserialize};use std::{io::{BufRead,BufReader,Write},path:
 pub fn resolve_executable(explicit:Option<&Path>)->Result<PathBuf,RuntimeError>{if let Some(p)=explicit{if p.is_file() && is_executable(p){return Ok(p.to_path_buf())}return Err(RuntimeError::NotExecutable(p.display().to_string()))}if let Ok(path)=std::env::var("PATH"){for d in path.split(':'){let p=Path::new(d).join("omp");if p.is_file() && is_executable(&p){return Ok(p)}}}Err(RuntimeError::NotFound)}
 #[cfg(unix)] fn is_executable(p:&Path)->bool{use std::os::unix::fs::PermissionsExt;std::fs::metadata(p).map(|m|m.permissions().mode()&0o111!=0).unwrap_or(false)}
 #[cfg(not(unix))] fn is_executable(p:&Path)->bool{p.is_file()}
+pub const MIN_PROTOCOL:u32=2;
 pub fn probe(path:&Path)->Result<RuntimeInfo,RuntimeError>{let o=Command::new(path).arg("--version").output().map_err(|e|RuntimeError::Probe(e.to_string()))?;if !o.status.success(){return Err(RuntimeError::Probe(String::from_utf8_lossy(&o.stderr).trim().into()))}Ok(RuntimeInfo{executable:path.display().to_string(),version:Some(String::from_utf8_lossy(&o.stdout).trim().into()),status:"ready".into(),detail:None,protocol:None,capabilities:None})}
 pub struct OmpProcess{pub child:Child,pub protocol:u32}
 impl Drop for OmpProcess{fn drop(&mut self){let _=self.child.kill();let _=self.child.wait();}}
