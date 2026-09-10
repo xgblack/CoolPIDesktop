@@ -1,52 +1,57 @@
 import {useEffect,useRef,useState} from 'react';
-import {host,hostError,projects,records,recoverSession} from './host';
-import type {Project,TaskRecord,TaskSnapshot,RuntimeInfo,Message,PendingUiRequest} from '../../../packages/host-contract/src';
+import {Group,Panel,Separator} from 'react-resizable-panels';
+import {FolderOpen,Menu,Plus} from 'lucide-react';
+import {host,hostError,projects,records} from './host';
+import type {TaskRecord} from '../../../packages/host-contract/src';
+import {Button} from '@/components/ui/button';
+import {TooltipProvider} from '@/components/ui/tooltip';
+import {Sheet,SheetContent,SheetTitle,SheetDescription} from '@/components/ui/sheet';
+import {useWorkbench} from '@/components/workbench/use-workbench';
+import {useTheme} from '@/components/workbench/theme';
+import {ProjectSidebar} from '@/components/workbench/project-sidebar';
+import {TaskHeader,type Capabilities} from '@/components/workbench/task-header';
+import {MessageList} from '@/components/workbench/message-list';
+import {Composer} from '@/components/workbench/composer';
+import {ApprovalPanel} from '@/components/workbench/approval-panel';
+import {NameDialog,RuntimeSettings,RecoveryDialog} from '@/components/workbench/workbench-dialogs';
+import {ErrorNotice,IconButton} from '@/components/workbench/shared';
 import './style.css';
-import {HistoryFeed} from './history';
-function messageText(content:unknown):string {
- if(typeof content==='string')return content;
- if(Array.isArray(content))return content.map(v=>typeof v?.text==='string'?v.text:typeof v?.thinking==='string'?'思考：'+v.thinking:v?.type==='image'?'[图片]':v?.type==='toolCall'?'工具调用：'+v.name+'\n'+JSON.stringify(v.arguments,null,2):JSON.stringify(v)).join('\n');
- return JSON.stringify(content)??'';
-}
-function Approval({request,respond}:{request:PendingUiRequest;respond:(value:string|null,confirmed:boolean|null,cancelled:boolean)=>void}){
- const [value,setValue]=useState('');
- return <fieldset><legend>{request.title||request.method}</legend><p>{request.message}</p>{request.method==='confirm'?<><button onClick={()=>respond(null,true,false)}>允许</button><button onClick={()=>respond(null,false,false)}>拒绝</button></>:<>{request.method==='select'?<select value={value} onChange={e=>setValue(e.target.value)}><option value="">选择</option>{request.options?.map(v=><option key={v}>{v}</option>)}</select>:<textarea value={value} onChange={e=>setValue(e.target.value)}/>}<button onClick={()=>respond(value,null,false)}>提交</button></>}<button onClick={()=>respond(null,null,true)}>取消请求</button></fieldset>;
-}
+
 export function App(){
- const [ps,setPs]=useState<Project[]>([]),[ts,setTs]=useState<TaskRecord[]>([]),[runs,setRuns]=useState<TaskSnapshot[]>([]);
- const [project,setProject]=useState(''),[selected,setSelected]=useState(''),[showArchived,setArchived]=useState(false);
- const [runtime,setRuntime]=useState<RuntimeInfo>(),[path,setPath]=useState(''),[name,setName]=useState(''),[title,setTitle]=useState(''),[trusted,setTrusted]=useState(false);
- const [busy,setBusy]=useState(false),[error,setError]=useState(''),[draft,setDraft]=useState(''),[messages,setMessages]=useState<Message[]>([]),[cursor,setCursor]=useState<string|null>(null),[model,setModel]=useState('');
- const generation=useRef(0),active=useRef(true),lastStatus=useRef(''),feed=useRef(new HistoryFeed());
- const [candidate,setCandidate]=useState(''),[relocateTrust,setRelocateTrust]=useState(false);
- const task=ts.find(t=>t.id===selected),run=runs.find(t=>t.taskId===selected),p=ps.find(p=>p.id===project);
- const refresh=async()=>{const epoch=generation.current;const [a,b,c]=await Promise.all([projects.list(),records.list(),host.list()]);if(active.current&&epoch===generation.current){setPs(a);setTs(b);setRuns(c);}};
- const fail=(e:unknown)=>{const v=hostError(e);setError([v.code,v.message,v.suggestion].filter(Boolean).join(' '));};
- const act=async(f:()=>Promise<unknown>)=>{generation.current++;setBusy(true);setError('');try{await f();}catch(e){fail(e);}finally{generation.current++;setBusy(false);await refresh().catch(fail);}};
- useEffect(()=>{active.current=true;let inFlight=false;const poll=async()=>{if(inFlight)return;inFlight=true;try{await refresh();}catch(e){if(active.current)fail(e);}finally{inFlight=false;}};void poll();const id=setInterval(poll,700);return()=>{active.current=false;clearInterval(id);};},[]);
- const history=(more=false)=>feed.current.load(cursor=>records.history(selected,cursor),more,()=>{if(active.current){setMessages(feed.current.messages);setCursor(feed.current.cursor);}});
- useEffect(()=>{feed.current.reset();setMessages([]);setCursor(null);lastStatus.current='';setModel('');setCandidate('');setRelocateTrust(false);},[selected,run?.runId]);
- const turn=run?.events.filter(e=>e.eventType==='user_message').at(-1)?.seq??0;
- useEffect(()=>{if(!run)return;const key=run.runId+':'+run.status+':'+turn;if(run.status==='running'){feed.current.invalidate();lastStatus.current=key;return;}if(key!==lastStatus.current&&['ready','idle','interrupted'].includes(run.status)){lastStatus.current=key;void history().catch(fail);} },[run?.status,run?.runId,turn,selected]);
- const choose=(t:TaskRecord)=>{generation.current++;feed.current.reset();setSelected(t.id);setProject(t.projectId);setTitle(t.title);setMessages([]);setCursor(null);};
- const capabilities=(run?.runtime?.capabilities??runtime?.capabilities) as {models?:{id:string;provider:string;name?:string}[];state?:{model?:{id:string;provider:string}}}|undefined;
- return <main><header><h1>OMP Desktop</h1><span>项目工作台</span></header>{error&&<p role="alert" className="error">{error}</p>}
- <details><summary>系统运行时</summary><label>OMP executable<input value={path} onChange={e=>setPath(e.target.value)} placeholder="已保存路径或 PATH"/></label><button disabled={busy} onClick={()=>act(async()=>setRuntime(await host.runtime(path)))}>检测 OMP</button>{runtime&&<p>{runtime.status} · {runtime.version} · RPC {runtime.protocol}<br/>{runtime.executable}<br/>{runtime.error?.message} {runtime.error?.suggestion}</p>}</details>
- <div className="workspace"><aside><h2>项目</h2><input aria-label="项目名称" value={name} onChange={e=>setName(e.target.value)} placeholder="项目名称"/><label><input type="checkbox" checked={trusted} onChange={e=>setTrusted(e.target.checked)}/>信任所选目录中的配置与扩展</label><button disabled={busy||!name.trim()||!trusted} onClick={()=>act(async()=>{const p=await projects.register(name,trusted);if(p){setProject(p.id);setName('');}})}>选择目录并添加</button>
- {ps.filter(p=>showArchived||!p.archived).map(p=><button key={p.id} className={project===p.id?'selected':''} onClick={()=>setProject(p.id)}>{p.name}{p.archived?'（归档）':''}</button>)}
- <label><input type="checkbox" checked={showArchived} onChange={e=>setArchived(e.target.checked)}/>显示归档</label>
- {p&&<><p className="paths">{p.roots.join('\n')}</p><button disabled={busy||!name.trim()} onClick={()=>act(()=>projects.update(p.id,name,p.archived))}>使用上方名称重命名</button><button disabled={busy} onClick={()=>act(()=>projects.update(p.id,p.name,!p.archived))}>{p.archived?'恢复项目':'归档项目'}</button></>}
- <h2>任务</h2><input aria-label="任务名称" value={title} onChange={e=>setTitle(e.target.value)} placeholder="任务名称"/><button disabled={busy||!p||p.archived||!title.trim()} onClick={()=>act(async()=>choose(await records.create(project,title)))}>创建任务</button>
- {ts.filter(t=>t.projectId===project&&(showArchived||!t.archived)).sort((a,b)=>Number(b.pinned)-Number(a.pinned)).map(t=><button key={t.id} className={selected===t.id?'selected':''} onClick={()=>choose(t)}>{t.pinned?'* ':''}{t.title} · {runs.find(r=>r.taskId===t.id)?.status??t.lastRun?.state??'未运行'}</button>)}</aside>
- <section>{task?<><h2>{task.title}</h2><p>{run?.status??task.lastRun?.state??'未运行'} · {task.sessionId??'新会话'}</p><div className="controls"><button disabled={busy||task.archived} onClick={()=>act(()=>records.resume(task.id))}>加载会话 / 继续</button><button disabled={busy||!run||['stopped','failed'].includes(run.status)} onClick={()=>act(()=>host.stop(task.id))}>停止</button><button disabled={busy||!run||task.archived} onClick={()=>act(()=>host.restart(task.id))}>重启进程</button><button disabled={busy||run?.status!=='running'} onClick={()=>act(()=>host.abort(task.id))}>取消生成</button><button disabled={busy||!title.trim()} onClick={()=>act(()=>records.update({...task,title}))}>重命名</button><button disabled={busy} onClick={()=>act(()=>records.update({...task,pinned:!task.pinned}))}>{task.pinned?'取消置顶':'置顶'}</button><button disabled={busy} onClick={()=>act(()=>records.update({...task,archived:!task.archived}))}>{task.archived?'恢复任务':'归档任务'}</button></div>
- <details><summary>目录与会话恢复</summary><p>主目录：{task.roots[0]}</p>{task.roots.slice(1).map(root=><p key={root}>附加目录：{root}</p>)}<label><input type="checkbox" checked={relocateTrust} onChange={e=>setRelocateTrust(e.target.checked)}/>信任重新选择的目录配置与扩展</label><button disabled={busy||!relocateTrust||!!run&&!['stopped','failed'].includes(run.status)} onClick={()=>act(async()=>{await records.relocate(task.id,relocateTrust);setRelocateTrust(false);})}>重新定位目录</button>{!task.sessionId&&<><button disabled={busy} onClick={()=>act(async()=>setCandidate(await recoverSession(task.id,false)))}>查找未绑定会话</button>{candidate&&<p>发现会话 {candidate}<button disabled={busy} onClick={()=>act(async()=>{await recoverSession(task.id,true);setCandidate('');})}>确认恢复此会话</button></p>}</>}<p>会话缺失或损坏时保留原任务。需要独立对话请创建新任务。</p></details>
- {!run&&task.lastRun?.errorCode&&<p className="error">上次运行：{task.lastRun.errorCode}；不会重发未完成消息或旧审批。</p>}
- {!run&&<p>加载会话将启动 OMP；OMP 可能迁移会话格式。</p>}{run?.error&&<p className="error">{run.error.message} {run.error.suggestion}</p>}
- <label>模型<select value={model} onChange={e=>setModel(e.target.value)}><option value="">{capabilities?.state?.model?.id??'选择已配置模型'}</option>{capabilities?.models?.map(m=><option key={m.provider+'/'+m.id} value={JSON.stringify([m.provider,m.id])}>{m.provider}/{m.id}</option>)}</select></label><button disabled={busy||!model||!run||run.status==='running'} onClick={()=>act(async()=>{const [provider,id]=JSON.parse(model);await records.model(task.id,provider,id);setModel('');})}>切换模型</button>
- {run&&!(capabilities?.models?.length)&&<p>没有可用模型；请配置 OMP 后重新检测。</p>}
- {run?.pendingUi?.map(r=><Approval key={run.runId+r.id} request={r} respond={(value,confirmed,cancelled)=>{void act(()=>host.respond(task.id,r.id,value,confirmed,cancelled));}}/>)}
- <button disabled={busy||!run||!['ready','idle','interrupted'].includes(run.status)} onClick={()=>act(()=>history())}>刷新历史</button><div className="messages">{messages.map((m,i)=><article key={task.sessionId+':'+run?.runId+':'+i}><strong>{m.role}</strong><pre>{messageText(m.content)}</pre></article>)}</div>{cursor&&<button disabled={busy||run?.status==='running'} onClick={()=>act(()=>history(true))}>加载更多历史</button>}
- {run?.status==='running'&&<pre>{run.text}</pre>}
- <form onSubmit={e=>{e.preventDefault();const message=draft;void act(async()=>{await host.prompt(task.id,message);setDraft('');});}}><textarea aria-label="消息" value={draft} onChange={e=>setDraft(e.target.value)}/><button disabled={busy||!draft.trim()||!run||!['ready','idle','interrupted'].includes(run.status)||!capabilities?.state?.model}>发送</button></form>
- </>:<p>选择项目和任务。</p>}</section></div></main>;
+ const w=useWorkbench(),theme=useTheme();
+ const [archived,setArchived]=useState(false),[sidebar,setSidebar]=useState(true),[drawer,setDrawer]=useState(false);
+ const [narrow,setNarrow]=useState(()=>matchMedia('(max-width: 899px)').matches);
+ const [settings,setSettings]=useState(false),[recovery,setRecovery]=useState<'task'|'project'|null>(null);
+ const [dialog,setDialog]=useState<{kind:'project'|'task'|'rename';initial:string;task?:TaskRecord;project?:boolean}|null>(null);
+ const trigger=useRef<HTMLElement|null>(null),main=useRef<HTMLElement|null>(null);
+ const remember=()=>{trigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null;};
+ const restore=()=>{requestAnimationFrame(()=>{if(trigger.current?.isConnected)trigger.current.focus();else main.current?.focus();});};
+ const openName=(value:NonNullable<typeof dialog>)=>{remember();setDialog(value);};
+ useEffect(()=>{const media=matchMedia('(max-width: 899px)');const change=()=>{setNarrow(media.matches);setDrawer(false);};media.addEventListener('change',change);return()=>media.removeEventListener('change',change);},[]);
+ const {task,run}=w;
+ const capabilities=run?.runtime?.capabilities as Capabilities|undefined;
+ const ready=!!run&&['ready','idle','interrupted'].includes(run.status),running=run?.status==='running';
+ const key=(task?.id??'')+':'+(run?.runId??'');
+ const side=<ProjectSidebar projects={w.projects} tasks={w.tasks} runs={w.runs} projectId={w.projectId} taskId={w.taskId} loading={w.loading} busy={w.busy} showArchived={archived} onArchived={setArchived}
+  onProject={w.chooseProject} onTask={t=>{w.chooseTask(t);setDrawer(false);}} onNewProject={()=>openName({kind:'project',initial:''})} onNewTask={()=>openName({kind:'task',initial:''})}
+  onRenameProject={()=>openName({kind:'rename',initial:w.project?.name??'',project:true})} onArchiveProject={()=>{if(w.project)void w.act(()=>projects.update(w.project!.id,w.project!.name,!w.project!.archived));}}
+  onRenameTask={t=>openName({kind:'rename',initial:t.title,task:t})} onUpdateTask={t=>void w.act(()=>records.update(t))}
+  onSettings={()=>{remember();setSettings(true);}} onClose={()=>narrow?setDrawer(false):setSidebar(false)} onPaths={()=>{remember();setRecovery('project');}}/>;
+ const content=<main ref={main} tabIndex={-1} className="conversation">
+  {task?<TaskHeader task={task} run={run} busy={w.busy} sidebarVisible={!narrow&&sidebar} onSidebar={()=>narrow?setDrawer(true):setSidebar(true)} onContinue={()=>void w.act(()=>records.resume(task.id))} onStop={()=>void w.act(()=>host.stop(task.id))} onRestart={()=>void w.act(()=>host.restart(task.id))} onAbort={()=>void w.act(()=>host.abort(task.id))} onModel={(p,id)=>void w.act(()=>records.model(task.id,p,id))} onRecovery={()=>{remember();setRecovery('task');}}/>:<header className="task-header"><div className="task-header-title">{(narrow||!sidebar)&&<IconButton label="打开侧栏" onClick={()=>narrow?setDrawer(true):setSidebar(true)}><Menu/></IconButton>}<h1>项目工作台</h1></div></header>}
+  <div className="notice-stack"><ErrorNotice error={w.error}/><ErrorNotice error={run?.error}/><ErrorNotice error={w.historyError}/>
+   {w.historyError&&ready&&<Button variant="outline" size="sm" disabled={w.historyBusy} onClick={()=>void w.history()}>重新加载历史</Button>}
+   {task&&!run&&<p>加载会话将启动 OMP，并可能迁移会话格式。不会自动重发消息或旧审批。{task.lastRun?.errorCode&&' 上次运行：'+task.lastRun.errorCode}</p>}
+  </div>
+  {task?<><MessageList taskKey={key} messages={w.messages} streamingText={running?run?.text??'':''} running={running} hasMore={!!w.cursor} loading={w.historyBusy} onMore={()=>{if(ready)void w.history(true);}} onRefresh={()=>{if(ready)void w.history();}} onError={e=>w.setError(hostError(e))}/>
+   <ApprovalPanel key={key} requests={run?.pendingUi??[]} busy={w.busy} onRespond={(id,value,confirmed,cancelled)=>void w.act(()=>host.respond(task.id,id,value,confirmed,cancelled))}/>
+   <Composer key={key} taskId={task.id} draft={w.drafts[task.id]??''} onDraft={v=>w.setDraft(task.id,v)} onSend={()=>void w.send(task.id)} onAbort={()=>void w.act(()=>host.abort(task.id))} canSend={ready&&!!capabilities?.state?.model&&!task.archived} running={running} busy={w.busy} disabledReason={task.archived?'任务已归档，请先恢复任务。':!ready&&!running?'点击“继续”加载会话后发送。':!capabilities?.state?.model?'没有可用模型，请先配置 OMP 模型再加载会话。':undefined}/>
+  </>:<div className="workspace-empty"><FolderOpen size={32}/><h2>{w.project?'选择任务，继续工作':'让每段对话都有自己的工作空间'}</h2><p>{w.project?'从侧栏选择历史任务，或创建一段独立对话。':'添加本机项目目录，再创建任务。OMP 只在你继续任务时启动。'}</p><Button disabled={w.busy||w.project?.archived} onClick={()=>openName({kind:w.project?'task':'project',initial:''})}><Plus/>{w.project?'创建任务':'添加项目'}</Button></div>}
+ </main>;
+ return <TooltipProvider><div className="workbench">{narrow?content:<Group orientation="horizontal">{sidebar&&<><Panel id="sidebar" defaultSize={260} minSize={220} maxSize={360}>{side}</Panel><Separator className="panel-separator"/></>}<Panel id="conversation" minSize={320}>{content}</Panel></Group>}</div>
+  {narrow&&<Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" showCloseButton={false} className="w-[min(320px,90vw)] gap-0 p-0"><SheetTitle className="sr-only">项目与任务</SheetTitle><SheetDescription className="sr-only">选择项目和任务</SheetDescription>{side}</SheetContent></Sheet>}
+  {dialog&&<NameDialog {...dialog} onClose={()=>setDialog(null)} restoreFocus={restore} onSubmit={async(name,trusted)=>{if(dialog.kind==='project'){const p=await projects.register(name,trusted);if(!p)return;await w.refresh();w.chooseProject(p.id);}else if(dialog.kind==='task'){const t=await records.create(w.projectId,name);await w.refresh();w.chooseTask(t);setDrawer(false);}else if(dialog.task){await records.update({...dialog.task,title:name});await w.refresh();}else if(dialog.project&&w.project){await projects.update(w.project.id,name,w.project.archived);await w.refresh();}}}/>}
+  <RuntimeSettings open={settings} onClose={()=>setSettings(false)} theme={theme.theme} onTheme={theme.change} themeError={theme.error} restoreFocus={restore}/>
+  {recovery&&<RecoveryDialog task={recovery==='task'?task:undefined} roots={(recovery==='task'?task?.roots:w.project?.roots)??[]} onClose={()=>setRecovery(null)} onChanged={w.refresh} restoreFocus={restore}/>}
+ </TooltipProvider>;
 }

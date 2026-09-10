@@ -5,6 +5,75 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 type Result<T> = std::result::Result<T, HostError>;
 
+fn external_url(value: &str) -> Result<url::Url> {
+    let url = url::Url::parse(value).map_err(|_| HostError::new("invalid_url", "链接格式无效"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(HostError::new(
+            "invalid_url",
+            "仅允许无内嵌凭据的 HTTP/HTTPS 链接",
+        ));
+    }
+    Ok(url)
+}
+
+#[tauri::command]
+async fn open_external_link(url: String) -> Result<()> {
+    let url = external_url(&url)?;
+    // macOS is the current release target. Pass one validated URL argument, never shell code.
+    #[cfg(target_os = "macos")]
+    {
+        let status = tauri::async_runtime::spawn_blocking(move || {
+            std::process::Command::new("/usr/bin/open")
+                .arg(url.as_str())
+                .status()
+        })
+        .await
+        .map_err(|e| HostError::new("open_link_failed", e))?
+        .map_err(|e| HostError::new("open_link_failed", e))?;
+        if !status.success() {
+            return Err(HostError::new("open_link_failed", "系统未能打开链接"));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err(HostError::new(
+            "unsupported_platform",
+            "当前仅支持 macOS 外部链接",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::external_url;
+    #[test]
+    fn restrict_external_urls() {
+        for value in [
+            "javascript:alert(1)",
+            "file:///tmp/a",
+            "data:text/html,x",
+            "https://user:secret@example.com",
+            "https://",
+            "--help",
+            "ftp://example.com",
+        ] {
+            assert!(external_url(value).is_err(), "{value}");
+        }
+        for value in [
+            "https://example.com/a?q=hello#world",
+            "http://localhost:3000",
+        ] {
+            assert!(external_url(value).is_ok(), "{value}");
+        }
+    }
+}
+
 #[tauri::command]
 async fn runtime_status(w: State<'_, Workbench>, explicit: Option<String>) -> Result<RuntimeInfo> {
     Ok(w.detect(explicit).await)
@@ -181,6 +250,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_external_link,
             runtime_status,
             list_projects,
             register_project,
