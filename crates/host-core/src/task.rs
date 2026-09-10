@@ -607,11 +607,7 @@ async fn run(
                         let id=payload["id"].as_str().unwrap_or_default();
                         let Some(pos)=s.pending_ui.iter().position(|v|v["id"]==id) else {let _=reply.send(Err(HostError::new("invalid_ui_request","UI request expired or unknown")));continue;};
                         let request=&s.pending_ui[pos];
-                        let valid=payload["cancelled"]==true || match request["method"].as_str() {
-                            Some("confirm")=>payload["confirmed"].is_boolean(),
-                            Some("select")=>request["options"].as_array().is_some_and(|a|a.contains(&payload["value"])),
-                            Some("input"|"editor")=>payload["value"].is_string(), _=>false,
-                        };
+                        let valid=valid_ui_response(request,&payload);
                         if !valid {let _=reply.send(Err(HostError::new("invalid_ui_response","Invalid response for this UI request")));continue;}
                         let mut body=json!({"type":"extension_ui_response","id":id});
                         for key in ["cancelled","confirmed","value"] {if let Some(v)=payload.get(key){body[key]=v.clone();}}
@@ -691,7 +687,7 @@ async fn run(
             let event = s.fail(e.clone());
             broker.publish(event);
         } else if s.status != "failed" {
-            let event = s.status("interrupted");
+            let event = s.status("stopped");
             broker.publish(event);
         }
     }
@@ -702,5 +698,41 @@ async fn run(
     }
     if let Some(reply) = stop_reply {
         let _ = reply.send(closed);
+    }
+}
+
+fn valid_ui_response(request: &Value, payload: &Value) -> bool {
+    payload["cancelled"] == true
+        || match request["method"].as_str() {
+            Some("confirm") => payload["confirmed"].is_boolean(),
+            Some("select") => request["options"]
+                .as_array()
+                .is_some_and(|a| a.contains(&payload["value"])),
+            Some("input" | "editor") => payload["value"].is_string(),
+            _ => false,
+        }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ui_responses_validate_method_and_choice() {
+        let confirm = json!({"method":"confirm"});
+        assert!(valid_ui_response(&confirm, &json!({"confirmed":false})));
+        assert!(!valid_ui_response(&confirm, &json!({"confirmed":"true"})));
+        let select = json!({"method":"select","options":["yes","no"]});
+        assert!(valid_ui_response(&select, &json!({"value":"no"})));
+        assert!(!valid_ui_response(&select, &json!({"value":"unknown"})));
+        assert!(valid_ui_response(&select, &json!({"cancelled":true})));
+        for method in ["input", "editor"] {
+            assert!(valid_ui_response(
+                &json!({"method":method}),
+                &json!({"value":""})
+            ));
+            assert!(!valid_ui_response(
+                &json!({"method":method}),
+                &json!({"value":null})
+            ));
+        }
     }
 }

@@ -1,4 +1,4 @@
-use host_core::{ObserverInfo, RuntimeInfo, TaskManager};
+use host_core::{HostError, ObserverInfo, RuntimeInfo, TaskManager, TaskSnapshot};
 use std::path::PathBuf;
 use tokio::sync::OnceCell;
 static MANAGER: OnceCell<TaskManager> = OnceCell::const_new();
@@ -14,50 +14,36 @@ fn health() -> &'static str {
     "ok"
 }
 #[tauri::command]
-async fn runtime_status(explicit: Option<String>) -> Result<RuntimeInfo, String> {
+async fn runtime_status(explicit: Option<String>) -> Result<RuntimeInfo, HostError> {
     Ok(manager().await.runtime_status(explicit).await)
 }
 #[tauri::command]
-async fn detect_omp(explicit: Option<String>) -> Result<RuntimeInfo, String> {
+async fn detect_omp(explicit: Option<String>) -> Result<RuntimeInfo, HostError> {
     runtime_status(explicit).await
 }
 #[tauri::command]
-async fn start_task(
-    task_id: String,
-    explicit: Option<String>,
-) -> Result<serde_json::Value, String> {
-    manager()
-        .await
-        .start(task_id, explicit)
-        .await
-        .map(|v| serde_json::to_value(v).unwrap())
-        .map_err(|e| e.to_string())
+async fn start_task(task_id: String, explicit: Option<String>) -> Result<TaskSnapshot, HostError> {
+    manager().await.start(task_id, explicit).await
 }
 #[tauri::command]
-async fn stop_task(task_id: String) -> Result<serde_json::Value, String> {
-    manager()
-        .await
-        .stop(&task_id)
-        .await
-        .map(|_| serde_json::json!({"taskId":task_id,"status":"interrupted"}))
-        .map_err(|e| e.to_string())
-}
-#[tauri::command]
-async fn prompt_task(task_id: String, message: String) -> Result<serde_json::Value, String> {
-    manager()
-        .await
-        .request(&task_id, "prompt", serde_json::json!({"message":message}))
-        .await
-        .map_err(|e| e.to_string())?;
+async fn stop_task(task_id: String) -> Result<TaskSnapshot, HostError> {
+    manager().await.stop(&task_id).await?;
     task_snapshot(task_id).await
 }
 #[tauri::command]
-async fn abort_task(task_id: String) -> Result<serde_json::Value, String> {
+async fn prompt_task(task_id: String, message: String) -> Result<TaskSnapshot, HostError> {
+    manager()
+        .await
+        .request(&task_id, "prompt", serde_json::json!({"message":message}))
+        .await?;
+    task_snapshot(task_id).await
+}
+#[tauri::command]
+async fn abort_task(task_id: String) -> Result<TaskSnapshot, HostError> {
     manager()
         .await
         .request(&task_id, "abort", serde_json::json!({}))
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
     task_snapshot(task_id).await
 }
 #[tauri::command]
@@ -67,45 +53,25 @@ async fn respond_ui(
     value: Option<String>,
     confirmed: Option<bool>,
     cancelled: bool,
-) -> Result<serde_json::Value, String> {
-    manager().await.request(&task_id,"extension_ui_response",serde_json::json!({"id":request_id,"value":value,"confirmed":confirmed,"cancelled":cancelled})).await.map_err(|e|e.to_string())?;
+) -> Result<TaskSnapshot, HostError> {
+    manager().await.request(&task_id,"extension_ui_response",serde_json::json!({"id":request_id,"value":value,"confirmed":confirmed,"cancelled":cancelled})).await?;
     task_snapshot(task_id).await
 }
 #[tauri::command]
-async fn restart_task(task_id: String) -> Result<serde_json::Value, String> {
-    manager()
-        .await
-        .restart(&task_id)
-        .await
-        .map(|v| serde_json::to_value(v).unwrap())
-        .map_err(|e| e.to_string())
+async fn restart_task(task_id: String) -> Result<TaskSnapshot, HostError> {
+    manager().await.restart(&task_id).await
 }
 #[tauri::command]
-async fn list_tasks() -> Result<Vec<serde_json::Value>, String> {
-    Ok(manager()
-        .await
-        .snapshots()
-        .await
-        .into_iter()
-        .map(|v| serde_json::to_value(v).unwrap())
-        .collect())
+async fn list_tasks() -> Result<Vec<TaskSnapshot>, HostError> {
+    Ok(manager().await.snapshots().await)
 }
 #[tauri::command]
-async fn task_snapshot(task_id: String) -> Result<serde_json::Value, String> {
-    manager()
-        .await
-        .snapshot(&task_id)
-        .await
-        .map(|v| serde_json::to_value(v).unwrap())
-        .map_err(|e| e.to_string())
+async fn task_snapshot(task_id: String) -> Result<TaskSnapshot, HostError> {
+    manager().await.snapshot(&task_id).await
 }
 #[tauri::command]
-async fn observer_info() -> Result<ObserverInfo, String> {
-    manager()
-        .await
-        .observer_info()
-        .await
-        .map_err(|e| e.to_string())
+async fn observer_info() -> Result<ObserverInfo, HostError> {
+    manager().await.observer_info().await
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -129,7 +95,9 @@ pub fn run() {
     app.run(|_, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             if let Some(manager) = MANAGER.get() {
-                let _ = tauri::async_runtime::block_on(manager.shutdown());
+                if let Err(error) = tauri::async_runtime::block_on(manager.shutdown()) {
+                    eprintln!("OMP cleanup failed: {error}");
+                }
             }
         }
     });

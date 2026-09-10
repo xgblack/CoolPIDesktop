@@ -106,7 +106,14 @@ async fn real_host_lifecycle() {
         println!("PASS crash isolation: alpha killed, beta completes real prompt");
         worker.stop("beta").await.unwrap();
         assert_eq!(unsafe{libc::kill(pid(&b),0)},-1,"stopped process survived");
-        println!("PASS stop: child reaped");
+        assert_eq!(worker.snapshot("beta").await.unwrap().status,"stopped");
+        assert!(worker.request("beta","prompt",json!({"message":"must not run"})).await.is_err());
+        worker.restart("beta").await.unwrap();
+        let alive=wait(&worker,"beta",|s|s.status=="ready").await;
+        worker.shutdown().await.unwrap();
+        assert_eq!(unsafe{libc::kill(pid(&alive),0)},-1);
+        assert_eq!(std::io::Error::last_os_error().raw_os_error(),Some(libc::ESRCH));
+        println!("PASS stop and shutdown: stopped snapshot, rejects prompt, active child reaped");
     }).await;
     manager.shutdown().await.unwrap();
     scenario.unwrap();

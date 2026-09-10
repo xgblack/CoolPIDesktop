@@ -134,6 +134,8 @@ async fn serve(
                 let _ = socket.close(None).await;
                 return;
             }
+            // Subscribe before reading snapshots: concurrent events remain queued.
+            let mut events = broker.subscribe();
             let after_seq = auth
                 .as_ref()
                 .and_then(|value| value["afterSeq"].as_object())
@@ -164,7 +166,6 @@ async fn serve(
             {
                 return;
             }
-            let mut events = broker.subscribe();
             loop {
                 tokio::select! {
                     event = events.recv() => match event {
@@ -190,6 +191,94 @@ mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+    #[tokio::test]
+    async fn reconnect_returns_current_run_and_truncated_snapshot() {
+        let broker = EventBroker::new(4);
+        let snapshot:TaskSnapshot=serde_json::from_value(json!({
+            "taskId":"alpha","runId":"new-run","seq":301,"status":"idle",
+            "events":[{"taskId":"alpha","runId":"new-run","seq":301,"eventType":"status","payload":{"status":"idle"}}],
+            "text":"retained text","truncated":true,"pendingUi":[],"error":null,
+            "runtime":{"executable":"fixture","version":null,"status":"ready","protocol":2,"capabilities":{},"error":null}
+        })).unwrap();
+        let snapshots = Arc::new(RwLock::new(HashMap::from([(
+            "alpha".into(),
+            Arc::new(RwLock::new(snapshot)),
+        )])));
+        let info = broker.observer_info(snapshots).await.unwrap();
+        // Old run's high seq cannot suppress authoritative replacement snapshot.
+        for seq in [999, 300] {
+            let (mut client, _) = connect_async(&info.url).await.unwrap();
+            client
+                .send(Message::Text(
+                    json!({"token":info.token,"afterSeq":{"alpha":seq}})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            let value: Value =
+                serde_json::from_str(&client.next().await.unwrap().unwrap().into_text().unwrap())
+                    .unwrap();
+            assert_eq!(value["tasks"][0]["runId"], "new-run");
+            assert_eq!(value["tasks"][0]["truncated"], true);
+            assert_eq!(value["tasks"][0]["text"], "retained text");
+            if seq == 300 {
+                let recovery: Value = serde_json::from_str(
+                    &client.next().await.unwrap().unwrap().into_text().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(recovery["events"][0]["seq"], 301);
+            }
+            client.close(None).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn events_published_while_snapshot_is_locked_are_not_lost() {
+        let broker = EventBroker::new(2);
+        let snapshots = Arc::new(RwLock::new(HashMap::new()));
+        let guard = snapshots.write().await;
+        let info = broker.observer_info(snapshots.clone()).await.unwrap();
+        let (mut client, _) = connect_async(&info.url).await.unwrap();
+        client
+            .send(Message::Text(
+                json!({"token":info.token}).to_string().into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while broker.tx.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("observer must subscribe before snapshot lock");
+        broker.publish(HostEvent {
+            task_id: "alpha".into(),
+            run_id: "new".into(),
+            seq: 1,
+            event_type: "status".into(),
+            payload: json!({"status":"ready"}),
+        });
+        drop(guard);
+        let first = client.next().await.unwrap().unwrap().into_text().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&first).unwrap()["type"],
+            "snapshot"
+        );
+        let next = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&next).unwrap()["event"]["seq"],
+            1
+        );
+    }
 
     #[tokio::test]
     async fn loopback_observer_requires_token_and_never_accepts_commands() {
