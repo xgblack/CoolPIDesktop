@@ -1,4 +1,4 @@
-export type RuntimeStatus='not_found'|'not_executable'|'version_unreadable'|'version_unsupported'|'starting'|'handshake_failed'|'capability_query_failed'|'partially_available'|'ready'|'process_exited';
+export type RuntimeStatus='not_found'|'not_executable'|'version_unreadable'|'version_unsupported'|'starting'|'handshake_failed'|'capability_query_failed'|'partially_available'|'ready'|'process_exited'|'model_required';
 export interface HostError{code:string;message:string;suggestion?:string}
 export interface RuntimeInfo{status:RuntimeStatus;executable?:string|null;version?:string|null;protocol?:number|null;capabilities?:unknown;detail?:string|null;error?:HostError|null}
 export type TaskStatus='starting'|'ready'|'running'|'idle'|'failed'|'interrupted'|'stopped';
@@ -6,3 +6,7 @@ export interface HostEvent{taskId:string;runId:string;seq:number;eventType:strin
 export interface PendingUiRequest{id:string;method:'confirm'|'select'|'input'|'editor';title?:string;message?:string;options?:string[]}
 export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[]}
 export interface ObserverInfo{url:string;token:string}
+export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
+export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
+export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
+export interface Message{role:string;content:unknown;timestamp?:number;toolCallId?:string}

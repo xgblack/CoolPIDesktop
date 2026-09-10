@@ -32,6 +32,19 @@ impl HostError {
             "version_unreadable" => "在终端检查所选 OMP 的 --version 输出及启动环境。",
             "handshake_failed" | "capability_query_failed" => "检查 OMP 版本与配置，重新启动任务。",
             "task_busy" => "等待当前操作完成，或中止运行中的任务。",
+            "directory_missing" | "directory_changed" | "directory_unreadable" => {
+                "停止任务后重新定位目录，并重新确认信任。"
+            }
+            "session_missing" | "session_invalid" | "session_incompatible" | "session_mismatch" => {
+                "保留原任务；检查原会话文件或备份。需要独立对话请创建新任务。"
+            }
+            "session_recovery_required" => "在目录与会话恢复中查找候选；仅确认唯一可信会话。",
+            "stale_cursor" => "历史已变化，旧分页已丢弃；点击刷新历史重新加载。",
+            "session_busy" => "等待生成或压缩结束后再刷新历史。",
+            "database_error" | "database_version_unsupported" => {
+                "检查应用数据目录权限、磁盘空间和客户端版本；不要删除原数据库。"
+            }
+            "model_required" => "先在 OMP 中配置模型，再加载任务并选择已配置模型。",
             _ => "检查任务诊断；必要时停止并重新启动任务。",
         };
         Self {
@@ -111,6 +124,13 @@ pub(crate) fn command(path: &Path) -> Command {
 }
 // Kill the owned process group too: OMP can leave descendants holding pipe handles.
 pub(crate) async fn reap(child: &mut Child) -> Result<()> {
+    if child
+        .try_wait()
+        .map_err(|e| HostError::new("process_cleanup_failed", e))?
+        .is_some()
+    {
+        return Ok(());
+    }
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };

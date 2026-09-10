@@ -88,12 +88,27 @@ struct Task {
     tx: mpsc::Sender<Action>,
 }
 enum Action {
+    Query {
+        typ: &'static str,
+        payload: Value,
+        reply: oneshot::Sender<Result<Value>>,
+    },
     Request {
         typ: &'static str,
         payload: Value,
         reply: oneshot::Sender<Result<()>>,
     },
     Stop(oneshot::Sender<Result<()>>),
+}
+#[derive(Clone, Default)]
+pub struct LaunchOptions {
+    pub run_id: Option<String>,
+    pub root: PathBuf,
+    pub additional: Vec<PathBuf>,
+    pub model: Option<String>,
+    pub session_dir: Option<PathBuf>,
+    pub session_file: Option<PathBuf>,
+    pub expected_session: Option<String>,
 }
 #[derive(Clone)]
 pub struct TaskManager {
@@ -156,6 +171,23 @@ impl TaskManager {
         out
     }
     pub async fn start(&self, id: String, explicit: Option<String>) -> Result<TaskSnapshot> {
+        self.start_with(
+            id,
+            explicit,
+            LaunchOptions {
+                root: self.root.clone(),
+                model: self.model.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    pub async fn start_with(
+        &self,
+        id: String,
+        explicit: Option<String>,
+        options: LaunchOptions,
+    ) -> Result<TaskSnapshot> {
         if id.is_empty()
             || id.len() > 80
             || !id
@@ -184,7 +216,10 @@ impl TaskManager {
         }
         let snapshot = Arc::new(RwLock::new(TaskSnapshot {
             task_id: id.clone(),
-            run_id: Uuid::new_v4().to_string(),
+            run_id: options
+                .run_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
             seq: 0,
             status: "starting".into(),
             events: VecDeque::new(),
@@ -211,14 +246,7 @@ impl TaskManager {
         drop(map);
         self.snapshots.write().await.insert(id, snapshot.clone());
         let initial = snapshot.read().await.clone();
-        tokio::spawn(run(
-            path,
-            self.root.clone(),
-            self.model.clone(),
-            snapshot,
-            rx,
-            self.broker.clone(),
-        ));
+        tokio::spawn(run(path, options, snapshot, rx, self.broker.clone()));
         Ok(initial)
     }
     pub async fn restart(&self, id: &str) -> Result<TaskSnapshot> {
@@ -235,6 +263,35 @@ impl TaskManager {
             .get(id)
             .ok_or_else(|| HostError::new("task_not_found", id))?;
         Ok(task.snapshot.read().await.clone())
+    }
+    pub async fn forget_stopped(&self, id: &str) -> Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get(id) {
+            if !task.tx.is_closed() {
+                return Err(HostError::new("task_busy", "Process is still active"));
+            }
+        }
+        tasks.remove(id);
+        self.snapshots.write().await.remove(id);
+        Ok(())
+    }
+    pub async fn query(&self, id: &str, typ: &'static str, payload: Value) -> Result<Value> {
+        if !matches!(typ, "get_state" | "get_messages_page" | "set_model") {
+            return Err(HostError::new("forbidden_command", typ));
+        }
+        let (reply, done) = oneshot::channel();
+        self.sender(id)
+            .await?
+            .try_send(Action::Query {
+                typ,
+                payload,
+                reply,
+            })
+            .map_err(|_| HostError::new("task_busy", "Command queue unavailable"))?;
+        timeout(DEADLINE * 2, done)
+            .await
+            .map_err(|_| HostError::new("timeout", "Query timed out"))?
+            .map_err(|_| HostError::new("process_exited", "Task stopped"))?
     }
     pub async fn observer_info(&self) -> Result<ObserverInfo> {
         self.broker
@@ -309,6 +366,18 @@ struct Wire {
 }
 impl Wire {
     async fn spawn(path: &Path, root: &Path, model: Option<&str>) -> Result<Self> {
+        Self::spawn_with(
+            path,
+            &LaunchOptions {
+                root: root.into(),
+                model: model.map(str::to_owned),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn spawn_with(path: &Path, options: &LaunchOptions) -> Result<Self> {
+        let root = &options.root;
         if !root.is_dir() {
             return Err(HostError::new(
                 "invalid_workspace",
@@ -317,7 +386,23 @@ impl Wire {
         }
         let mut command = runtime::command(path);
         command.args(["--mode", "rpc"]);
-        if let Some(model) = model {
+        command.arg("--cwd").arg(root);
+        for path in &options.additional {
+            command.arg("--add-dir").arg(path);
+        }
+        if let Some(dir) = &options.session_dir {
+            command.arg("--session-dir").arg(dir);
+        }
+        if let Some(file) = &options.session_file {
+            if !file.is_file() {
+                return Err(HostError::new(
+                    "session_missing",
+                    "Bound session file is missing",
+                ));
+            }
+            command.arg("--session").arg(file);
+        }
+        if let Some(model) = &options.model {
             command.arg("--model").arg(model);
         }
         let mut child = command
@@ -385,10 +470,25 @@ impl Wire {
         });
         let stderr = tokio::spawn(async move {
             let mut b = [0u8; 4096];
+            let mut tail = String::new();
             loop {
                 match err.read(&mut b).await {
                     Ok(0) => break,
                     Ok(n) => {
+                        tail.push_str(&String::from_utf8_lossy(&b[..n]));
+                        if tail.contains("No models available.") {
+                            let _=err_tx.send(Err(HostError::new("model_required","OMP has no configured model; configure OMP before loading a session"))).await;
+                        }
+                        if tail.len() > 128 {
+                            tail = tail
+                                .chars()
+                                .rev()
+                                .take(128)
+                                .collect::<String>()
+                                .chars()
+                                .rev()
+                                .collect();
+                        }
                         // Drain even when the UI cannot keep up; do not retain unbounded diagnostics.
                         if err_tx
                             .try_send(Ok(json!({"type":"stderr","bytes":n})))
@@ -556,17 +656,27 @@ struct Pending {
 }
 async fn run(
     path: PathBuf,
-    root: PathBuf,
-    model: Option<String>,
+    options: LaunchOptions,
     snapshot: Arc<RwLock<TaskSnapshot>>,
     mut actions: mpsc::Receiver<Action>,
     broker: EventBroker,
 ) {
     let startup = async {
         let info = runtime::probe(&path).await?;
-        let mut wire = Wire::spawn(&path, &root, model.as_deref()).await?;
+        let mut wire = Wire::spawn_with(&path, &options).await?;
         match wire.initialize(info).await {
-            Ok(info) => Ok((wire, info)),
+            Ok(info) => {
+                if let Some(expected) = &options.expected_session {
+                    if info.capabilities["state"]["sessionId"] != *expected {
+                        wire.close().await?;
+                        return Err(HostError::new(
+                            "session_mismatch",
+                            "OMP resumed a different session",
+                        ));
+                    }
+                }
+                Ok((wire, info))
+            }
             Err(e) => {
                 wire.close().await?;
                 Err(e)
@@ -592,6 +702,8 @@ async fn run(
         broker.publish(event);
     }
     let mut pending: HashMap<String, Pending> = HashMap::new();
+    let mut queries: HashMap<String, (&'static str, Instant, oneshot::Sender<Result<Value>>)> =
+        HashMap::new();
     let mut active_prompt: Option<String> = None;
     let mut aborting = false;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -599,6 +711,11 @@ async fn run(
     loop {
         tokio::select! {
             action=actions.recv()=>match action {
+                Some(Action::Query{typ,payload,reply})=>{
+                    let status=snapshot.read().await.status.clone();
+                    if !matches!(status.as_str(),"ready"|"idle"|"interrupted") {let _=reply.send(Err(HostError::new("session_busy","Task is not idle")));continue;}
+                    match wire.send(typ,payload).await {Ok(id)=>{queries.insert(id,(typ,Instant::now()+DEADLINE,reply));},Err(e)=>{let _=reply.send(Err(e));}}
+                },
                 Some(Action::Stop(reply))=>{stop_reply=Some(reply);break;},
                 None=>break,
                 Some(Action::Request{typ,payload,reply})=>{
@@ -624,7 +741,7 @@ async fn run(
                     if pending.len()>=16 {let _=reply.send(Err(HostError::new("task_busy","Too many pending commands")));continue;}
                     match wire.send(typ,payload.clone()).await {
                         Ok(id)=>{
-                            if typ=="prompt" {active_prompt=Some(id.clone());aborting=false;let mut s=snapshot.write().await;let event=s.status("running");broker.publish(event);let event=s.event("user_message",json!({"text":payload["message"]}));broker.publish(event);}
+                            if typ=="prompt" {active_prompt=Some(id.clone());aborting=false;let mut s=snapshot.write().await;s.text.clear();let event=s.status("running");broker.publish(event);let event=s.event("user_message",json!({"text":payload["message"]}));broker.publish(event);}
                             if typ=="abort"{aborting=true;}
                             pending.insert(id,Pending{typ,deadline:Instant::now()+DEADLINE,reply:Some(reply)});
                         },
@@ -638,6 +755,11 @@ async fn run(
                 if typ=="stderr" { let event=snapshot.write().await.event("stderr",v.clone());broker.publish(event);continue; }
                 if typ=="response" {
                     let id=v["id"].as_str().unwrap_or_default();
+                    if let Some((command,_,reply))=queries.remove(id) {
+                        let result=if v["command"]!=command {Err(HostError::new("protocol_error","Query command mismatch"))}else if v["success"]==true {Ok(v["data"].clone())}else{Err(HostError::new(v["code"].as_str().unwrap_or("request_failed"),v["error"].as_str().unwrap_or("Query failed")))};
+                        if command=="get_state" {if let Ok(state)=&result {let mut s=snapshot.write().await;s.runtime.capabilities["state"]=state.clone();}}
+                        let _=reply.send(result);continue;
+                    }
                     if let Some(p)=pending.get_mut(id) {
                         if v["command"]!=p.typ {let event=snapshot.write().await.fail(HostError::new("protocol_error","Response command mismatch"));broker.publish(event);break;}
                         let result=if v["success"]==true {Ok(())}else{Err(HostError::new("request_failed",v["error"].as_str().unwrap_or("OMP rejected request")))};
@@ -672,6 +794,8 @@ async fn run(
                 let event=snapshot.write().await.event(typ,v.clone());broker.publish(event);
             },
             _=tick.tick()=>{
+                let expired:Vec<_>=queries.iter().filter(|(_,(_,deadline,_))|*deadline<=Instant::now()).map(|(id,_)|id.clone()).collect();
+                for id in expired {if let Some((_,_,reply))=queries.remove(&id){let _=reply.send(Err(HostError::new("timeout","Query response timed out")));}}
                 if let Some(id)=pending.iter().find(|(_,p)|p.reply.is_some()&&p.deadline<=Instant::now()).map(|(id,_)|id.clone()) {
                     let e=HostError::new("timeout",format!("OMP did not respond to {id}"));let event=snapshot.write().await.fail(e);broker.publish(event);break;
                 }

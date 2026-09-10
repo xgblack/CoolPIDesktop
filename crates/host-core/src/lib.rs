@@ -1,6 +1,10 @@
 pub mod broker;
 mod runtime;
+pub mod session;
+pub mod store;
 mod task;
+pub mod workspace;
 pub use broker::ObserverInfo;
 pub use runtime::{HostError, RuntimeInfo, probe, resolve_executable};
-pub use task::{HostEvent, TaskManager, TaskSnapshot};
+pub use session::Workbench;
+pub use task::{HostEvent, LaunchOptions, TaskManager, TaskSnapshot};

@@ -8,6 +8,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 host-core = { path = "../../../crates/host-core" }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
