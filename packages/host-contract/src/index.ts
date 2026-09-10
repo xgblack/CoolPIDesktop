@@ -3,5 +3,6 @@ export interface HostError{code:string;message:string;suggestion?:string}
 export interface RuntimeInfo{status:RuntimeStatus;executable?:string|null;version?:string|null;protocol?:number|null;capabilities?:unknown;detail?:string|null;error?:HostError|null}
 export type TaskStatus='starting'|'ready'|'running'|'idle'|'failed'|'interrupted'|'stopped';
 export interface HostEvent{taskId:string;runId:string;seq:number;eventType:string;payload:unknown}
-export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];error?:HostError|null}
+export interface PendingUiRequest{id:string;method:'confirm'|'select'|'input'|'editor';title?:string;message?:string;options?:string[]}
+export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[]}
 export interface ObserverInfo{url:string;token:string}

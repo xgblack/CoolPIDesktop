@@ -1,1 +1,3 @@
-fn main(){ cool_pi_desktop_lib::run(); }
+fn main() {
+    cool_pi_desktop_lib::run();
+}
