@@ -10,3 +10,9 @@ export interface Project{id:string;name:string;roots:string[];archived:boolean;t
 export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
 export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
 export interface Message{role:string;content:unknown;timestamp?:number;toolCallId?:string}
+export interface ConfigModel { id:string; originalId?:string; name?:string; api?:string; contextWindow?:number; maxTokens?:number; reasoning?:boolean; thinking?:Record<string,unknown>; input?:string[]; cost?:Record<string,unknown> }
+export interface ModelProvider { id:string; baseUrl:string|null; api:string|null; auth:string|null; authHeader:boolean|null; credentialConfigured:boolean; models:ConfigModel[] }
+export interface ModelConfig {path:string;exists:boolean;revision:string;providers:ModelProvider[]}
+export interface ModelEdit {revision:string;originalId:string|null;provider:ModelProvider;credentialAction:'keep'|'replace'|'clear';credential:string|null;deleted:boolean}
+export interface ModelCatalog {version:string;source:string;cached:boolean;models:(ConfigModel&{provider:string;baseUrl:string})[]}
+export interface ModelVerification {stage:'loaded'|'connected';message:string;models:{id:string;provider:string;name?:string}[]}

@@ -21,6 +21,7 @@ try {
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
     case 'task_history':return{messages:args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}],totalMessages:3};
     case 'select_task_model':throw{code:'model_unavailable',message:'模型切换失败，保留当前实际模型',suggestion:'检查模型配置。'};
+    case 'model_config_load':return{path:'/isolated/models.yml',exists:false,revision:'missing',providers:[]};
     case 'runtime_status':return{status:'model_required',version:'18.1.15',error:{code:'model_required',message:'没有可用模型',suggestion:'请先配置 OMP 模型。'}};
     default:throw{code:'fixture_unsupported',message:cmd};
    }}};
@@ -48,6 +49,7 @@ try {
   await page.getByText('模型切换失败，保留当前实际模型').waitFor();
   assert.match(await page.getByRole('combobox',{name:'任务模型'}).innerText(),/qwen3.7-flash/);
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
+  await page.getByRole('button',{name:'外观与运行时',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();
   await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'-settings.png'});
   await page.keyboard.press('Escape');

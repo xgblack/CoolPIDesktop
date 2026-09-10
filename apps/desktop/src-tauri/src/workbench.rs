@@ -240,6 +240,60 @@ async fn observer_info(w: State<'_, Workbench>) -> Result<ObserverInfo> {
     w.runtime.observer_info().await
 }
 
+#[tauri::command]
+async fn model_config_apply(w: State<'_, Workbench>) -> Result<Value> {
+    w.apply_model_config().await
+}
+async fn model_executable(w: &Workbench) -> Result<std::path::PathBuf> {
+    let saved = w.store.setting("executable").await?;
+    let path = host_core::resolve_executable(None, saved.as_deref().map(std::path::Path::new))?;
+    host_core::probe(&path).await?;
+    Ok(path)
+}
+#[tauri::command]
+async fn model_config_load() -> Result<host_core::model_config::Config> {
+    host_core::model_config::load(&host_core::model_config::config_path()?)
+}
+#[tauri::command]
+async fn model_config_save(
+    edit: host_core::model_config::Edit,
+) -> Result<host_core::model_config::Config> {
+    host_core::model_config::save(&host_core::model_config::config_path()?, &edit)
+}
+#[tauri::command]
+async fn model_catalog(
+    app: tauri::AppHandle,
+    w: State<'_, Workbench>,
+) -> Result<host_core::model_config::Catalog> {
+    let path = model_executable(&w).await?;
+    let version = host_core::probe(&path).await?.version.unwrap();
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|_| HostError::new("catalog_cache", "无法定位缓存目录"))?;
+    host_core::model_config::catalog(&cache, &version).await
+}
+#[tauri::command]
+async fn model_config_verify(
+    app: tauri::AppHandle,
+    w: State<'_, Workbench>,
+    provider: Option<String>,
+    model_id: Option<String>,
+) -> Result<host_core::model_config::Verification> {
+    let path = model_executable(&w).await?;
+    let cwd = app
+        .path()
+        .app_cache_dir()
+        .map_err(|_| HostError::new("config_verify", "无法定位验证目录"))?
+        .join("model-probe");
+    host_core::model_config::load(&host_core::model_config::config_path()?)?;
+    if let (Some(p), Some(id)) = (provider, model_id) {
+        host_core::model_config::connect(&path, &cwd, &p, &id).await
+    } else {
+        host_core::model_config::discover(&path, &cwd).await
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -250,6 +304,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            model_config_apply,
+            model_config_load,
+            model_config_save,
+            model_catalog,
+            model_config_verify,
             open_external_link,
             runtime_status,
             list_projects,

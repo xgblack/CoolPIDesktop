@@ -44,7 +44,7 @@ impl HostError {
             "database_error" | "database_version_unsupported" => {
                 "检查应用数据目录权限、磁盘空间和客户端版本；不要删除原数据库。"
             }
-            "model_required" => "先在 OMP 中配置模型，再加载任务并选择已配置模型。",
+            "model_required" => "打开设置中的“模型配置”，保存并验证后重新加载任务。",
             _ => "检查任务诊断；必要时停止并重新启动任务。",
         };
         Self {

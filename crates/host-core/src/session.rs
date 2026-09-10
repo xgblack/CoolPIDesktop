@@ -90,7 +90,10 @@ impl Workbench {
             },
         };
         let info = self.runtime.runtime_status(chosen).await;
-        if matches!(info.status.as_str(), "ready" | "partially_available") {
+        if matches!(
+            info.status.as_str(),
+            "ready" | "partially_available" | "model_required"
+        ) {
             if let Err(e) = self
                 .store
                 .set_setting("executable", info.executable.clone())
@@ -284,6 +287,49 @@ impl Workbench {
             )
             .await?;
         Ok(snapshot)
+    }
+    /// Explicit settings action: reload idle processes, never interrupt an active turn.
+    pub async fn apply_model_config(&self) -> Result<Value> {
+        let _guard = self.gate.lock().await;
+        let mut applied = Vec::new();
+        let mut skipped = Vec::new();
+        let mut errors = Vec::new();
+        for snapshot in self.runtime.snapshots().await {
+            if !matches!(snapshot.status.as_str(), "ready" | "idle" | "interrupted") {
+                if snapshot.status == "running" || snapshot.status == "starting" {
+                    skipped.push(snapshot.task_id);
+                }
+                continue;
+            }
+            let id = snapshot.task_id;
+            let record = self.store.task(&id).await?;
+            if record
+                .session_file
+                .as_ref()
+                .is_none_or(|file| !file.is_file())
+            {
+                skipped.push(id);
+                continue;
+            }
+            // State can advance while the UI is reading; check OMP before stopping.
+            let state = self.runtime.query(&id, "get_state", json!({})).await?;
+            if state["isStreaming"] == true || state["isCompacting"] == true {
+                skipped.push(id);
+                continue;
+            }
+            let result = async {
+                self.stop_locked(&id).await?;
+                self.runtime.forget_stopped(&id).await?;
+                self.continue_locked(&id).await?;
+                Result::Ok(())
+            }
+            .await;
+            match result {
+                Ok(()) => applied.push(id),
+                Err(error) => errors.push(json!({"taskId":id,"error":error})),
+            }
+        }
+        Ok(json!({"applied":applied,"skipped":skipped,"errors":errors}))
     }
     pub async fn restart(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
