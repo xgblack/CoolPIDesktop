@@ -2,7 +2,7 @@ import { Children, isValidElement, useLayoutEffect, useRef, useState, type React
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowDown, Check, Copy, RefreshCw, Terminal } from 'lucide-react';
+import { ArrowDown, Check, Copy, RefreshCw, Terminal, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { Message } from '../../../../../packages/host-contract/src';
 
@@ -90,6 +90,9 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
   const bottom = useRef(true);
   const previous = useRef({ taskKey, first: messages[0], height: 0 });
   const [atBottom, setAtBottom] = useState(true);
+  const [query, setQuery] = useState('');
+  const normalized = query.trim().toLowerCase();
+  const visibleMessages = normalized ? messages.filter(message => JSON.stringify(message.content).toLowerCase().includes(normalized)) : messages;
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -113,18 +116,20 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
       onScroll={() => { const e = viewport.current; if (!e) return; bottom.current = e.scrollHeight - e.scrollTop - e.clientHeight < 48; setAtBottom(bottom.current); }}>
       <div className="mx-auto max-w-[880px] px-4 py-5 sm:px-8">
         <div className="mb-4 flex items-center justify-center gap-2">
+          <label className="flex min-w-0 items-center gap-1 rounded border border-border px-2 text-xs"><Search size={13}/><span className="sr-only">搜索当前会话</span><input aria-label="搜索当前会话" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索会话" className="w-32 bg-transparent py-1 outline-none"/></label>
           {hasMore && <Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button>}
           {messages.length > 0 && <Button variant="ghost" size="sm" disabled={loading || running} onClick={onRefresh}><RefreshCw size={14} />刷新历史</Button>}
         </div>
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
         {!loading && messages.length === 0 && !streamingText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
-        {messages.map((message, index) => {
+        {visibleMessages.map((message, index) => {
           const tool = message.role === 'toolResult' || message.role === 'tool';
           return <article key={`${index}:${message.timestamp ?? ''}:${message.role}:${message.toolCallId ?? ''}`} className={`min-w-0 py-4 ${tool ? 'border-l-2 border-border pl-3' : ''}`}>
             <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">{tool && <Terminal size={14} />}{message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : tool ? '工具结果' : message.role}</div>
             <MessageContent message={message} onError={onError} />
           </article>;
         })}
+        {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
         {streamingText && <article className="min-w-0 py-4"><div className="mb-2 text-xs font-medium text-muted-foreground">助手 · 正在生成</div><Markdown text={streamingText} onError={onError} /></article>}
         {running && !streamingText && <p role="status" className="py-3 text-xs text-muted-foreground">正在处理…</p>}
       </div>
