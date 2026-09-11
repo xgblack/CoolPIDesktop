@@ -364,11 +364,68 @@ impl Workbench {
         self.runtime.snapshot(id).await
     }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {
+        // A stopped task has no in-memory runtime, but its OMP session remains the
+        // source of truth. Only use RPC while that task is actually alive.
+        let task = self.store.task(id).await?;
+        let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
+            matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
+        });
+        if !runtime_alive {
+            return self.stored_history(&task, cursor).await;
+        }
         let mut request = json!({"limit":64});
         if let Some(cursor) = cursor {
             request["cursor"] = Value::String(cursor);
         }
         self.runtime.query(id, "get_messages_page", request).await
+    }
+
+    async fn stored_history(&self, task: &TaskRecord, cursor: Option<String>) -> Result<Value> {
+        let Some(file) = task.session_file.clone() else {
+            return Ok(json!({"messages": [], "totalMessages": 0, "nextCursor": null}));
+        };
+        let expected = task.session_id.clone();
+        let offset = cursor
+            .as_deref()
+            .map(|value| {
+                value.parse::<usize>().map_err(|_| {
+                    HostError::new("stale_cursor", "Invalid persisted history cursor")
+                })
+            })
+            .transpose()?;
+        tokio::task::spawn_blocking(move || {
+            let header = session_header(&file)?;
+            if header["id"].as_str() != expected.as_deref() {
+                return Err(HostError::new(
+                    "session_mismatch",
+                    "Bound session identity changed",
+                ));
+            }
+            let reader = BufReader::new(
+                std::fs::File::open(&file).map_err(|e| HostError::new("session_missing", e))?,
+            );
+            let mut messages = Vec::new();
+            for line in reader.lines().skip(1) {
+                let line = line.map_err(|e| HostError::new("session_invalid", e))?;
+                let entry: Value = serde_json::from_str(&line)
+                    .map_err(|e| HostError::new("session_invalid", e))?;
+                if entry["type"] == "message" {
+                    if let Some(message) = entry.get("message") {
+                        messages.push(message.clone());
+                    }
+                }
+            }
+            let start = offset.unwrap_or(0).min(messages.len());
+            let end = (start + 64).min(messages.len());
+            let next = (end < messages.len()).then(|| end.to_string());
+            Ok(json!({
+                "messages": messages[start..end].to_vec(),
+                "totalMessages": messages.len(),
+                "nextCursor": next,
+            }))
+        })
+        .await
+        .map_err(|e| HostError::new("session_invalid", e))?
     }
     /// Refreshes only usage fields OMP actually reports. It never estimates a missing value.
     pub async fn refresh_usage(&self, id: &str) -> Result<TaskSnapshot> {
@@ -408,18 +465,23 @@ impl Workbench {
 
     pub async fn select_model(&self, id: &str, provider: &str, model_id: &str) -> Result<Value> {
         let _guard = self.gate.lock().await;
-        self.runtime
-            .query(
-                id,
-                "set_model",
-                json!({"provider":provider,"modelId":model_id}),
-            )
-            .await?;
-        let state = self.runtime.query(id, "get_state", json!({})).await?;
         self.store
             .set_model(id, Some(format!("{provider}/{model_id}")))
             .await?;
-        Ok(state)
+        let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
+            matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
+        });
+        if runtime_alive {
+            self.runtime
+                .query(
+                    id,
+                    "set_model",
+                    json!({"provider":provider,"modelId":model_id}),
+                )
+                .await?;
+            return self.runtime.query(id, "get_state", json!({})).await;
+        }
+        Ok(json!({"model":{"provider":provider,"id":model_id}}))
     }
     pub async fn recover_session(&self, id: &str, confirmed: bool) -> Result<String> {
         let _guard = self.gate.lock().await;
@@ -589,6 +651,27 @@ mod tests {
             w.store.task(&task.id).await.unwrap().session_id.as_deref(),
             Some("candidate")
         );
+        assert!(w.runtime.snapshots().await.is_empty());
+    }
+    #[tokio::test]
+    async fn stopped_task_reads_bound_session_without_runtime() {
+        let root = std::env::temp_dir().join(format!("omp-offline-history-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let w = Workbench::open(root.join("data")).await.unwrap();
+        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
+        let task = w.store.create_task(&project.id, "T").await.unwrap();
+        let dir = root.join("data/sessions").join(&task.id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("session.jsonl");
+        let header = json!({"type":"session","version":3,"id":"offline","cwd":root});
+        let user = json!({"type":"message","id":"u","parentId":null,"timestamp":"now","message":{"role":"user","content":"hello"}});
+        let assistant = json!({"type":"message","id":"a","parentId":"u","timestamp":"now","message":{"role":"assistant","content":"world"}});
+        std::fs::write(&file, format!("{header}\n{user}\n{assistant}\n")).unwrap();
+        w.store.bind(&task.id, "offline", file).await.unwrap();
+        let page = w.history(&task.id, None).await.unwrap();
+        assert_eq!(page["totalMessages"], 2);
+        assert_eq!(page["messages"][0]["content"], "hello");
+        assert_eq!(page["messages"][1]["content"], "world");
         assert!(w.runtime.snapshots().await.is_empty());
     }
     #[test]

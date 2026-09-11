@@ -4,7 +4,7 @@ import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {useWorkbench} from './use-workbench';
 import {host,projects,records,sendPrompt} from '../../host';
 import type {TaskRecord,TaskSnapshot} from '../../../../../packages/host-contract/src';
-vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn()},records:{list:vi.fn(),history:vi.fn()},hostError:(e:unknown)=>e}));
+vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn()},records:{list:vi.fn(),history:vi.fn()},modelConfig:{load:vi.fn().mockResolvedValue({providers:[]})},hostError:(e:unknown)=>e}));
 const task=(id:string):TaskRecord=>({id,projectId:'p',title:id,roots:['/tmp'],pinned:false,archived:false,sessionId:id,sessionFile:id,model:null});
 const a=task('a'),b=task('b');
 const run=(id:string):TaskSnapshot=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[]});
