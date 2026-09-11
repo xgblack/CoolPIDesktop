@@ -2,7 +2,7 @@ import {FileCompletion,useFileCompletion} from './file-completion';
 import type {FileReference} from '@/host';
 import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem} from '@/components/ui/dropdown-menu';
 import { useRef, useLayoutEffect, useState } from 'react';
-import { ArrowUp, Square, Plus, File, X, Play, Settings2,Folder,Monitor } from 'lucide-react';
+import { ArrowUp, Square, Plus, File, X, Play, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -10,7 +10,7 @@ export interface ComposerProps {
   taskId: string;
   roots?:string[];
   references?:FileReference[];onReferences?:(refs:FileReference[])=>void;
-  projectName?:string;models?:{id:string;provider:string;name?:string}[];onModel?:(provider:string,id:string)=>void;
+  models?:{id:string;provider:string;name?:string}[];onModel?:(provider:string,id:string)=>void;
   modelLabel?:string; onFiles?:()=>void; onContinue?:()=>void; onSettings?:()=>void;
   draft: string;
   onDraft: (value: string) => void;
@@ -24,7 +24,7 @@ export interface ComposerProps {
   onRemoveAttachment?: (id:string) => void;
 }
 
-export function Composer({ taskId, draft, onDraft, onSend, onAbort, canSend, running, busy, disabledReason, attachmentIds=[], onRemoveAttachment, modelLabel, onFiles, onContinue, onSettings, roots=[],references=[],onReferences,projectName,models=[],onModel }: ComposerProps) {
+export function Composer({ taskId, draft, onDraft, onSend, onAbort, canSend, running, busy, disabledReason, attachmentIds=[], onRemoveAttachment, modelLabel, onFiles, onContinue, onSettings, roots=[],references=[],onReferences,models=[],onModel }: ComposerProps) {
   const [caret,setCaret]=useState(draft.length),[dismissed,setDismissed]=useState(false),[selected,setSelected]=useState(0);
   const match=draft.slice(0,caret).match(/(?:^|\s)@([^\s@]*)$/);
   const query=match&&!dismissed&&roots.length?match[1]:null;
@@ -44,7 +44,6 @@ export function Composer({ taskId, draft, onDraft, onSend, onAbort, canSend, run
   ].filter(command=>command.action&&command.id.startsWith(draft.trim()));
   const commandMenu=draft.startsWith('/')&&!draft.includes(' ')&&commands.length>0;
   return <><form aria-label="发送消息" className="composer" onSubmit={event => { event.preventDefault(); send(); }}>
-    {projectName&&<div className="composer-context"><span><Folder size={14}/>{projectName}</span><span><Monitor size={14}/>本地</span></div>}
     <div className="composer-card">
       {query!==null&&<FileCompletion {...completion} selected={selected} onSelect={selectFile}/>}
       {commandMenu&&<div className="composer-commands" aria-label="工作台快捷命令">{commands.map(command=><button key={command.id} type="button" disabled={busy} onClick={()=>{command.action?.();onDraft('');}}><code>{command.id}</code><span>{command.label}</span></button>)}</div>}

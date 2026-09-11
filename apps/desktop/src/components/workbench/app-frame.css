@@ -28,8 +28,6 @@
 .empty-conversations { font-size:12px; color:var(--muted-foreground); padding:8px 12px; }
 .composer { position:relative; }
 .composer-card { position:relative; }
-.composer-context { display:flex; gap:20px; padding:10px 16px 16px; margin:0 12px -8px; border-radius:14px 14px 0 0; background:var(--muted); font-size:12px; }
-.composer-context span { display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .file-completion { position:absolute; z-index:40; bottom:calc(100% + 8px); left:0; right:0; max-height:300px; overflow:auto; padding:6px; border:1px solid var(--border); background:var(--popover); color:var(--popover-foreground); border-radius:14px; box-shadow:0 8px 24px #0002; }
 .file-completion button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:8px 10px; border-radius:8px; }
 .file-completion button[aria-selected=true],.file-completion button:hover { background:var(--muted); }
