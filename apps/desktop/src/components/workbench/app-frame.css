@@ -16,3 +16,35 @@
 [aria-label="待处理请求"]{background:transparent;border:0;padding:8px 24px}[aria-label="待处理请求"]>div{max-width:var(--ui-chat-width)}[aria-label="待处理请求"] fieldset{padding:16px;border:1px solid color-mix(in srgb,var(--ui-brand) 30%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--ui-brand) 4%,var(--background))}
 .task-navigation{display:flex;flex:none;gap:0}.task-navigation button{width:24px;height:28px}.diff-lines>span{display:block;min-width:max-content;white-space:pre}.diff-add{color:var(--ui-state-success);background:color-mix(in srgb,var(--ui-state-success) 8%,transparent)}.diff-remove{color:var(--ui-state-error);background:color-mix(in srgb,var(--ui-state-error) 8%,transparent)}.diff-range{color:var(--ui-brand)}.settings-dialog>[role=alert]{grid-column:1/-1}.task-header-title>div.min-w-0{min-width:0;flex:1}
 .assistant-body>div,.user-bubble>div{font-size:14px;line-height:1.7}.message-column pre{font-size:12px;line-height:1.65}.message-column table{font-size:12px}.message-assistant details>summary{font-size:12px}.message-column .assistant-body h2{font-size:20px}
+
+/* Local project / conversation workflow. */
+.sidebar-project { margin: 3px 0 10px; }
+.sidebar-project-title { display:flex; align-items:center; gap:4px; border-radius:8px; padding:4px; }
+.sidebar-project-title.active,.sidebar-project-title:hover { background:var(--muted); }
+.sidebar-project-title>button { display:flex; align-items:center; gap:8px; min-width:0; text-align:left; }
+.sidebar-project-title>button:nth-child(2) { flex:1; }
+.sidebar-project-title>button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.project-conversations { padding-left:22px; }
+.empty-conversations { font-size:12px; color:var(--muted-foreground); padding:8px 12px; }
+.composer { position:relative; }
+.composer-card { position:relative; }
+.composer-context { display:flex; gap:20px; padding:10px 16px 16px; margin:0 12px -8px; border-radius:14px 14px 0 0; background:var(--muted); font-size:12px; }
+.composer-context span { display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-completion { position:absolute; z-index:40; bottom:calc(100% + 8px); left:0; right:0; max-height:300px; overflow:auto; padding:6px; border:1px solid var(--border); background:var(--popover); color:var(--popover-foreground); border-radius:14px; box-shadow:0 8px 24px #0002; }
+.file-completion button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:8px 10px; border-radius:8px; }
+.file-completion button[aria-selected=true],.file-completion button:hover { background:var(--muted); }
+.file-completion span { min-width:0; }
+.file-completion strong,.file-completion small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-completion strong { font-size:13px; font-weight:500; }
+.file-completion small,.file-completion p { font-size:11px; color:var(--muted-foreground); }
+.file-completion p { padding:8px; }
+.composer-references { display:flex; flex-wrap:wrap; gap:6px; padding:8px; }
+.composer-references>span { display:flex; align-items:center; gap:6px; border:1px solid var(--border); background:var(--muted); border-radius:6px; padding:4px 6px; font-size:12px; max-width:100%; overflow-wrap:anywhere; }
+.project-folders { border:1px solid var(--border); border-radius:12px; margin:12px 0; }
+.project-folders>div { display:flex; align-items:center; gap:8px; padding:10px; border-bottom:1px solid var(--border); }
+.project-folders>div>span { flex:1; overflow:hidden; text-overflow:ellipsis; }
+.project-folders label { display:flex; gap:5px; font-size:12px; }
+.project-folders>button { margin:8px; }
+.starter-actions { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:24px; }
+.starter-actions button { min-height:80px; white-space:normal; }
+.streaming-tail { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.625; }

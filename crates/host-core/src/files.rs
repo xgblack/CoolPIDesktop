@@ -254,6 +254,23 @@ fn list(root: File, path: &str) -> Result<DirectoryPage> {
     Ok(DirectoryPage { entries, truncated })
 }
 impl Workbench {
+    pub async fn search_project_files(&self, id: &str, index: usize, query: &str) -> Result<DirectoryPage> {
+        if query.len()>256 {return Err(HostError::new("invalid_query","文件查询过长"));}
+        let project=self.store.projects().await?.into_iter().find(|p|p.id==id)
+            .ok_or_else(||HostError::new("project_missing","项目不存在"))?;
+        if !project.trusted {return Err(HostError::new("workspace_untrusted","项目目录未经信任"));}
+        let path=project.roots.get(index).ok_or_else(||HostError::new("invalid_file_root","目录不属于当前项目"))?;
+        let root=absolute_dir(Path::new(path))?;
+        let query=query.to_lowercase();
+        tokio::task::spawn_blocking(move||search(root,&query)).await.map_err(|_|HostError::new("file_io_error","文件搜索中断"))?
+    }
+    pub async fn search_files(&self, id: &str, index: usize, query: &str) -> Result<DirectoryPage> {
+        if query.len() > 256 { return Err(HostError::new("invalid_query", "文件查询过长")); }
+        let root = self.file_root(id, index).await?;
+        let query = query.to_lowercase();
+        tokio::task::spawn_blocking(move || search(root, &query)).await
+            .map_err(|_| HostError::new("file_io_error", "文件搜索中断"))?
+    }
     pub(crate) async fn file_root(&self, id: &str, index: usize) -> Result<File> {
         let roots = self.store.validate_task_roots(id).await?;
         let path = roots
@@ -279,4 +296,31 @@ impl Workbench {
             .await
             .map_err(|_| HostError::new("file_io_error", "文件读取中断"))?
     }
+}
+
+fn search(root: File, query: &str) -> Result<DirectoryPage> {
+    let mut pending = vec![String::new()];
+    let mut entries = Vec::new();
+    let mut visited = 0;
+    let mut truncated = false;
+    while let Some(path) = pending.pop() {
+        visited += 1;
+        if visited > 2000 || entries.len() >= 100 { truncated = true; break; }
+        let page = match list(root.try_clone().map_err(io_error)?, &path) {
+            Ok(page) => page,
+            Err(e) if !path.is_empty() && matches!(e.code.as_str(), "file_permission_denied" | "file_missing" | "file_path_denied") => { truncated = true; continue; },
+            Err(e) => return Err(e),
+        };
+        truncated |= page.truncated;
+        for entry in page.entries {
+            if entry.kind == "directory" {
+                if !matches!(entry.name.as_str(), ".git" | "node_modules" | "target" | "dist" | ".next") && path.matches('/').count() < 32 { pending.push(entry.path); }
+            } else if entry.kind == "file" && entry.path.to_lowercase().contains(query) {
+                entries.push(entry);
+                if entries.len() >= 100 { truncated = true; break; }
+            }
+        }
+    }
+    entries.sort_by_key(|e| (!e.name.to_lowercase().starts_with(query), e.path.len(), e.path.clone()));
+    Ok(DirectoryPage { entries, truncated })
 }

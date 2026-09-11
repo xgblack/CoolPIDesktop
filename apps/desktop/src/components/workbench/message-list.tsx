@@ -1,4 +1,4 @@
-import { Children, isValidElement, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
@@ -49,7 +49,7 @@ function safeUrl(value: string): string | undefined {
   } catch { return undefined; }
 }
 
-function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
+const Markdown=memo(function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
   return <div className="min-w-0 break-words text-sm leading-relaxed [overflow-wrap:anywhere] [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_h1]:my-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:my-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:my-3 [&_h3]:font-semibold [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs [&_hr]:my-4 [&_hr]:border-border">
     <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={url => safeUrl(url) ?? ''} components={{
       pre: ({ children }) => <CodeBlock onError={onError}>{children}</CodeBlock>,
@@ -64,9 +64,9 @@ function Markdown({ text, onError }: { text: string; onError: MessageListProps['
       table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left text-xs [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_td]:border [&_td]:border-border [&_td]:p-2">{children}</table></div>,
     }}>{text}</ReactMarkdown>
   </div>;
-}
+},(a,b)=>a.text===b.text);
 
-function MessageContent({ message, onError }: { message: Message; onError: MessageListProps['onError'] }) {
+const MessageContent=memo(function MessageContent({ message, onError }: { message: Message; onError: MessageListProps['onError'] }) {
   const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content }]
     : Array.isArray(message.content) ? message.content : [{ type: 'unknown', value: message.content }];
   return <>{blocks.map((raw: unknown, index: number) => {
@@ -83,6 +83,13 @@ function MessageContent({ message, onError }: { message: Message; onError: Messa
     </details>;
     return <pre key={index} className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs text-muted-foreground">{JSON.stringify(block.value ?? block, null, 2)}</pre>;
   })}</>;
+},(a,b)=>a.message===b.message);
+
+function StreamingMarkdown({text,onError}:{text:string;onError:MessageListProps['onError']}){
+ const [parsed,setParsed]=useState(text),latest=useRef(text);latest.current=text;
+ useEffect(()=>{const timer=setInterval(()=>setParsed(latest.current),120);return()=>clearInterval(timer);},[]);
+ const prefix=text.startsWith(parsed)?parsed:'';
+ return <><Markdown text={prefix} onError={onError}/><span className="streaming-tail">{text.slice(prefix.length)}</span></>;
 }
 
 export function MessageList({ taskKey, messages, streamingText, running, hasMore, loading, onMore, onRefresh, onError }: MessageListProps) {
@@ -130,7 +137,7 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
           </article>;
         })}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
-        {streamingText && <article className="min-w-0 py-4"><div className="mb-2 text-xs font-medium text-muted-foreground">助手 · 正在生成</div><Markdown text={streamingText} onError={onError} /></article>}
+        {streamingText && <article className="min-w-0 py-4"><div className="mb-2 text-xs font-medium text-muted-foreground">助手 · {running?'正在生成':'正在同步'}</div><StreamingMarkdown text={streamingText} onError={onError} /></article>}
         {running && !streamingText && <p role="status" className="py-3 text-xs text-muted-foreground">正在处理…</p>}
       </div>
     </div>

@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Composer } from './composer';
+import {searchFiles} from '@/host';
+vi.mock('@/host',()=>({searchFiles:vi.fn(),hostError:(e:unknown)=>e}));
 
 afterEach(cleanup);
 const base = { taskId: 'task-a', draft: '任务 A 草稿', onDraft: vi.fn(), onSend: vi.fn(), onAbort: vi.fn(), canSend: true, running: false, busy: false };
 
 describe('Composer', () => {
-  it('sends with Cmd/Ctrl+Enter, never plain Enter or IME confirmation', () => {
+  it('sends with Enter, never modified Enter or IME confirmation', () => {
     const onSend = vi.fn();
     render(<Composer {...base} onSend={onSend} />);
     const input = screen.getByRole('textbox', { name: '消息' });
-    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
     expect(onSend).not.toHaveBeenCalled();
     fireEvent.compositionStart(input);
     fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
@@ -21,7 +23,9 @@ describe('Composer', () => {
     expect(onSend).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: 'Enter', metaKey: true });
     fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
-    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
   });
 
   it('retains controlled drafts, switches task content, and prevents busy or unavailable sends', () => {
@@ -53,8 +57,20 @@ it('allows attachment-only sends and routes exact local commands without sending
  fireEvent.click(screen.getByRole('button',{name:'发送'}));
  expect(onSend).toHaveBeenCalledTimes(1);
  rerender(<Composer {...base} draft="/files" onFiles={onFiles} onSend={onSend} onDraft={onDraft}/>);
- fireEvent.keyDown(screen.getByRole('textbox',{name:'消息'}),{key:'Enter',metaKey:true});
+ fireEvent.keyDown(screen.getByRole('textbox',{name:'消息'}),{key:'Enter'});
  expect(onFiles).toHaveBeenCalledTimes(1);
  expect(onSend).toHaveBeenCalledTimes(1);
  expect(onDraft).toHaveBeenCalledWith('');
+});
+
+it('filters @ filenames and Enter selects the candidate without sending',async()=>{
+ vi.mocked(searchFiles).mockResolvedValue({entries:[{name:'composer.tsx',path:'src/composer.tsx',kind:'file',size:1}],truncated:false});
+ const onSend=vi.fn(),onReferences=vi.fn(),onDraft=vi.fn();
+ render(<Composer {...base} draft="@comp" roots={['/project']} onSend={onSend} onReferences={onReferences} onDraft={onDraft}/>);
+ await screen.findByRole('option');
+ expect(searchFiles).toHaveBeenCalledWith('task-a',0,'comp');
+ fireEvent.keyDown(screen.getByRole('textbox',{name:'消息'}),{key:'Enter'});
+ expect(onSend).not.toHaveBeenCalled();
+ expect(onDraft).toHaveBeenCalledWith('@composer.tsx ');
+ expect(onReferences).toHaveBeenCalledWith([{rootIndex:0,path:'src/composer.tsx',name:'composer.tsx'}]);
 });

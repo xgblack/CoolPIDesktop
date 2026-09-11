@@ -339,6 +339,19 @@ async fn task_files_reject_escape_and_symlink_and_preview_bounded_files() {
         .unwrap();
     let task = w.store.create_task(&project.id, "files").await.unwrap();
     let page = w.list_files(&task.id, 0, "").await.unwrap();
+    let matches=w.search_files(&task.id,0,"README").await.unwrap();
+    assert_eq!(matches.entries.len(),1);
+    assert_eq!(matches.entries[0].path,"readme.txt");
+    assert!(w.search_files(&task.id,0,"link").await.unwrap().entries.is_empty());
+    assert!(w.search_files(&task.id,1,"").await.is_err());
+    assert!(w.search_files(&task.id,0,"../outside").await.unwrap().entries.is_empty());
+    assert!(w.search_files(&task.id,0,&"x".repeat(257)).await.is_err());
+    let project_matches=w.search_project_files(&project.id,0,"readme").await.unwrap();
+    assert_eq!(project_matches.entries.len(),1);
+    assert!(w.search_project_files(&project.id,2,"").await.is_err());
+    std::fs::create_dir_all(root.join("one/node_modules")).unwrap();
+    std::fs::write(root.join("one/node_modules/hidden.txt"),"hidden").unwrap();
+    assert!(w.search_files(&task.id,0,"hidden").await.unwrap().entries.is_empty());
     assert!(
         page.entries
             .iter()

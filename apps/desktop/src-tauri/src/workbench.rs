@@ -5,6 +5,33 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 type Result<T> = std::result::Result<T, HostError>;
 
+#[derive(Default)]
+struct SelectedFolders(std::sync::Mutex<std::collections::HashMap<String,std::path::PathBuf>>);
+
+#[tauri::command]
+async fn choose_project_folders(app: tauri::AppHandle, selections: State<'_, SelectedFolders>) -> Result<Vec<Value>> {
+    let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folders()).await.map_err(|e|HostError::new("dialog_failed",e))?;
+    let mut output=Vec::new();
+    let mut selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
+    for file in picked.unwrap_or_default() {
+        let path=file.into_path().map_err(|e|HostError::new("invalid_workspace",e))?;
+        let token=uuid::Uuid::new_v4().to_string();
+        output.push(serde_json::json!({"token":token,"path":path}));
+        selected.insert(token,path);
+    }
+    Ok(output)
+}
+
+#[tauri::command]
+async fn create_local_project(w:State<'_,Workbench>,selections:State<'_,SelectedFolders>,name:String,tokens:Vec<String>,trusted:bool)->Result<Project>{
+    let paths={let selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
+        tokens.iter().map(|t|selected.get(t).cloned().ok_or_else(||HostError::new("invalid_workspace","请重新选择项目文件夹"))).collect::<Result<Vec<_>>>()?};
+    if !trusted { return Err(HostError::new("workspace_untrusted","请确认目录信任")); }
+    let project=w.store.register_project(&name,paths,trusted).await?;
+    if let Ok(mut selected)=selections.0.lock(){for t in tokens {selected.remove(&t);}}
+    Ok(project)
+}
+
 fn external_url(value: &str) -> Result<url::Url> {
     let url = url::Url::parse(value).map_err(|_| HostError::new("invalid_url", "链接格式无效"))?;
     if !matches!(url.scheme(), "http" | "https")
@@ -194,9 +221,28 @@ async fn prompt_task(
     task_id: String,
     message: String,
     attachment_ids: Option<Vec<String>>,
+    references: Option<Vec<FileReference>>,
 ) -> Result<TaskSnapshot> {
+    let mut message=message;
+    let references=references.unwrap_or_default();
+    if references.len()>32 {return Err(HostError::new("invalid_request","引用文件过多"));}
+    for reference in references {
+        w.preview_file(&task_id,reference.root_index,&reference.path).await?;
+        let roots=w.store.validate_task_roots(&task_id).await?;
+        let path=roots.get(reference.root_index).ok_or_else(||HostError::new("invalid_file_root","目录不属于当前任务"))?.join(&reference.path);
+        message.push_str(&format!("\nReferenced workspace file: {}",serde_json::to_string(&path).map_err(|e|HostError::new("invalid_request",e))?));
+    }
     w.prompt_with_attachments(&task_id, &message, &attachment_ids.unwrap_or_default())
         .await
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all="camelCase")]
+struct FileReference {root_index:usize,path:String}
+
+#[tauri::command]
+async fn search_task_files(w:State<'_,Workbench>,task_id:String,root_index:usize,query:String)->Result<host_core::files::DirectoryPage>{
+    if let Some(project)=task_id.strip_prefix("project:"){return w.search_project_files(project,root_index,&query).await;}
+    w.search_files(&task_id,root_index,&query).await
 }
 #[tauri::command]
 async fn list_task_files(
@@ -472,6 +518,7 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             let workbench = tauri::async_runtime::block_on(Workbench::open(directory))?;
             app.manage(workbench);
+            app.manage(SelectedFolders::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -484,6 +531,8 @@ pub fn run() {
             runtime_status,
             list_projects,
             register_project,
+            choose_project_folders,
+            create_local_project,
             update_project,
             task_records,
             create_task,
@@ -496,6 +545,7 @@ pub fn run() {
             task_snapshot,
             prompt_task,
             list_task_files,
+            search_task_files,
             preview_task_file,
             task_attachments,
             preview_task_attachment,
