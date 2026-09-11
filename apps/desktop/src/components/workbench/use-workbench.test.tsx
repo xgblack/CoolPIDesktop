@@ -44,6 +44,16 @@ it('discards delayed history from the previously selected task',async()=>{
  await act(async()=>pending.resolve({messages:[{role:'assistant',content:'stale A'}],totalMessages:1}));
  expect(result.current.messages[0]?.content).toBe('B only');expect(result.current.historyBusy).toBe(false);
 });
+
+it('loads persisted history when the task has no active run',async()=>{
+ vi.mocked(host.list).mockResolvedValue([]);
+ vi.mocked(records.history).mockResolvedValue({messages:[{role:'user',content:'历史用户消息'},{role:'assistant',content:'历史助手消息'}],totalMessages:2});
+ const {result}=renderHook(useWorkbench);await waitFor(()=>expect(result.current.loading).toBe(false));
+ act(()=>result.current.chooseTask(a));
+ await waitFor(()=>expect(result.current.messages).toHaveLength(2));
+ expect(records.history).toHaveBeenCalledWith('a',null);
+ expect(result.current.messages[0].content).toBe('历史用户消息');
+});
 it('does not publish an old operation error on another task',async()=>{
  const {result}=renderHook(useWorkbench);await waitFor(()=>expect(result.current.loading).toBe(false));
  act(()=>result.current.chooseTask(a));let reject!:(e:unknown)=>void;const pending=new Promise((_,r)=>{reject=r;});let operation!:Promise<boolean>;

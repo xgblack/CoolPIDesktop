@@ -55,7 +55,9 @@ export function useWorkbench(){
  };
  useEffect(()=>{historyEpoch.current++;feed.current.reset();setHistoryBusy(false);setHistoryError(null);render(n=>n+1);},[taskId]);
  const turn=run?.events.filter(e=>e.eventType==='user_message').at(-1)?.seq??0;
- useEffect(()=>{if(!run)return;if(run.status==='running'){feed.current.invalidate();setHistoryBusy(false);}else if(['ready','idle','interrupted'].includes(run.status)){void history();}},[taskId,runId,run?.status,turn]);
+ // History belongs to the persisted OMP session, not to the currently running
+ // process. A stopped task must remain readable without starting OMP first.
+ useEffect(()=>{if(run?.status==='running'){feed.current.invalidate();setHistoryBusy(false);return;}if(taskId)void history();},[taskId,runId,run?.status,turn]);
  const setDraft=(id:string,value:string)=>setDrafts(old=>({...old,[id]:value}));
  const refreshUsage=async(id:string)=>{
   try { const snapshot=await records.usage(id); if(active.current&&selection.current===id)setRuns(old=>old.map(run=>run.taskId===id&&run.runId===snapshot.runId?snapshot:run)); }
