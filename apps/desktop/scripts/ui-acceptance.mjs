@@ -8,7 +8,7 @@ const browser=await chromium.launch({channel:'chrome',headless:true});
 try {
  for(const [width,height] of [[1280,800],[1024,700],[390,844]])for(const theme of ['light','dark']){
   const page=await browser.newPage({viewport:{width,height},colorScheme:theme});
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
   await page.addInitScript(()=>{
    const project={id:'p',name:'长中文项目 · OMP 工作台界面改造与回归验证',roots:['/Users/developer/workspaces/长路径项目/客户端工作台与模型配置预置上下文目录','/tmp/additional-root'],archived:false,trusted:true};
    const task=id=>({id,projectId:'p',title:id==='a'?'审查工作台界面：长中文标题、代码与工具执行输出':'第二个任务 · 草稿和审批隔离',roots:project.roots,pinned:id==='a',archived:false,sessionId:id,sessionFile:'/tmp/'+id,model:'test/qwen3.7-flash'});
