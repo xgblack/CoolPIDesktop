@@ -26,6 +26,7 @@ function ToolRow({tool}: {tool: ToolActivity}) {
   return <article className="tool-row"><button className="tool-summary" onClick={() => setOpen(value => !value)} aria-expanded={open}>{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}<span className={`tool-status tool-${tool.status}`}>{tool.status === 'running' ? '运行中' : tool.status === 'succeeded' ? '完成' : tool.status === 'cancelled' ? '已取消' : '失败'}</span><code>{tool.name}</code></button>{open && <div className="tool-detail"><h3>参数</h3><pre>{display(tool.args)}</pre>{tool.result !== undefined && <><h3>结果</h3><pre>{display(tool.result)}</pre></>}</div>}</article>;
 }
 function Tools({tools}: {tools?: ToolActivity[]}) { return <section className="inspector-section" aria-label="工具执行"><div className="inspector-heading"><div><h2><Wrench size={15}/>工具执行</h2><p>当前运行的 OMP 工具调用</p></div></div>{!tools?.length ? <p className="inspector-empty">本次运行尚未收到工具调用。</p> : <div className="tool-list">{[...tools].reverse().map(tool => <ToolRow key={tool.id} tool={tool}/>)}</div>}</section>; }
+function AgentCapabilities() { return <section className="inspector-section" aria-label="并发能力"><div className="inspector-heading"><div><h2>并发能力</h2><p>任务、终端、附件与审批按任务和运行隔离</p></div></div><p className="inspector-note">当前安装版 OMP 未提供可验证的定向子代理控制接口；相关控制已禁用。可继续并行运行多个独立任务。</p></section>; }
 
 function ChangeButton({change, staged, onOpen}: {change: GitChange; staged: boolean; onOpen: (change: GitChange, staged: boolean) => void}) {
   const changed = staged ? change.indexStatus : change.worktreeStatus;
@@ -67,5 +68,5 @@ function ExecutionRoots({task}: {task: TaskRecord}) {
 }
 
 export function WorkbenchInspector({task, run, busy, onRefreshUsage, onAttach, selected}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void; onAttach?: (a:Attachment)=>void; selected?:string[]}) {
-  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/><TerminalPanel task={task}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside></TooltipProvider>;
+  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><AgentCapabilities/><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/><TerminalPanel task={task}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside></TooltipProvider>;
 }
