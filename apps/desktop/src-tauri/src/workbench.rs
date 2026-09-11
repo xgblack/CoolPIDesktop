@@ -434,6 +434,36 @@ async fn model_config_verify(
     }
 }
 
+#[tauri::command]
+async fn task_git_change(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+    path: String,
+    action: String,
+    confirmed: bool,
+) -> Result<()> {
+    w.git_change(&task_id, root_index, &path, &action, confirmed)
+        .await
+}
+#[tauri::command]
+async fn task_git_commit_preview(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+) -> Result<host_core::git_write::CommitPreview> {
+    w.git_commit_preview(&task_id, root_index).await
+}
+#[tauri::command]
+async fn task_git_commit(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+    message: String,
+    expected: host_core::git_write::CommitPreview,
+) -> Result<String> {
+    w.git_commit(&task_id, root_index, &message, expected).await
+}
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -480,6 +510,9 @@ pub fn run() {
             task_usage,
             task_git_status,
             task_git_diff,
+            task_git_change,
+            task_git_commit_preview,
+            task_git_commit,
             task_roots,
             isolate_task,
             cleanup_worktrees,

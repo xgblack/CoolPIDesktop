@@ -9,6 +9,7 @@ export interface PendingUiRequest{id:string;method:'confirm'|'select'|'input'|'e
 export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[];tools?:ToolActivity[];usage?:UsageSummary}
 export interface GitChange{path:string;originalPath?:string|null;indexStatus:string;worktreeStatus:string;kind:'modified'|'renamed'|'untracked'|'deleted'|'conflicted'|string}
 export interface GitStatus{rootIndex:number;available:boolean;branch?:string|null;changes:GitChange[]}
+export interface CommitPreview{branch:string;root:string;head:string;tree:string;paths:string[]}
 export interface GitDiff{rootIndex:number;path:string;staged:boolean;text:string;binary:boolean}
 export interface TaskRoot{taskId:string;rootIndex:number;originalRoot:string;executionPath:string;gitTopLevel?:string|null;relativePath?:string|null;mode:'shared'|'isolated'|string;baselineCommit?:string|null;branch?:string|null;worktreePath?:string|null;status:string;createdByClient:boolean;sourceDirty:boolean}
 export interface FileEntry{name:string;path:string;kind:'file'|'directory'|'symlink'|'special'|'unsupported'|'unavailable';size:number|null}

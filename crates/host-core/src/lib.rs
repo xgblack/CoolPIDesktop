@@ -2,6 +2,7 @@ pub mod attachments;
 pub mod broker;
 pub mod files;
 pub mod git;
+pub mod git_write;
 mod isolation;
 pub mod model_config;
 mod runtime;

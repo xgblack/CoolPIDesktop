@@ -58,13 +58,18 @@ fn safe_relative(value: &str) -> Result<PathBuf> {
     Ok(path.to_path_buf())
 }
 
-async fn git(root: &Path, args: &[&str], allow_nonzero: bool) -> Result<Vec<u8>> {
+pub(crate) async fn git(root: &Path, args: &[&str], allow_nonzero: bool) -> Result<Vec<u8>> {
     let mut command = Command::new("git");
     command
         .current_dir(root)
         .kill_on_drop(true)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("LC_ALL", "C")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .args([
             "-c",
             "core.pager=cat",
@@ -74,6 +79,12 @@ async fn git(root: &Path, args: &[&str], allow_nonzero: bool) -> Result<Vec<u8>>
             "color.ui=false",
             "-c",
             "diff.external=",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "commit.gpgSign=false",
         ])
         .args(args)
         .stdin(Stdio::null())

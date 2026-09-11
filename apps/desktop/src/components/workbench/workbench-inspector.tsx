@@ -7,6 +7,7 @@ import {ErrorNotice} from '@/components/workbench/shared';
 import {TooltipProvider} from '@/components/ui/tooltip';
 import {FilesPanel} from './files-panel';
 import {TerminalPanel} from './terminal-panel';
+import {GitWrites} from './git-writes';
 import type {Attachment, GitChange, GitDiff, GitStatus, HostError, TaskRecord, TaskRoot, TaskSnapshot, ToolActivity, UsageSummary} from '../../../../../packages/host-contract/src';
 
 const display = (value: unknown) => JSON.stringify(value, null, 2);
@@ -50,9 +51,10 @@ function Git({task}: {task: TaskRecord}) {
     catch (reason) { if (request === epoch.current) setError(hostError(reason)); }
     finally { if (request === epoch.current) setDiffLoading(false); }
   };
-  return <section className="inspector-section git-section" aria-label="Git 变更"><div className="inspector-heading"><div><h2><GitBranch size={15}/>版本变更</h2><p>只读 Git 视图，不会写入仓库</p></div><Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}><RefreshCw size={14}/>刷新</Button></div>
+  return <section className="inspector-section git-section" aria-label="Git 变更"><div className="inspector-heading"><div><h2><GitBranch size={15}/>版本变更</h2><p>共享目录只读；隔离任务停止后可写</p></div><Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}><RefreshCw size={14}/>刷新</Button></div>
     {task.roots.length > 1 && <Select value={root} onValueChange={setRoot}><SelectTrigger className="w-full min-w-0 [&>span]:truncate" aria-label="选择任务目录"><SelectValue/></SelectTrigger><SelectContent>{task.roots.map((path, index) => <SelectItem value={String(index)} key={path}>{index === 0 ? `主目录 · ${path}` : `附加目录 · ${path}`}</SelectItem>)}</SelectContent></Select>}
     {error && <ErrorNotice error={error}/>} {loading ? <div className="inspector-skeleton" role="status"><span/><span/><span/></div> : !status ? null : !status.available ? <p className="inspector-empty">所选目录不是 Git 仓库。</p> : <>{status.branch && <p className="git-branch">分支：<code>{status.branch}</code></p>}{!status.changes.length ? <p className="inspector-empty">工作区干净，没有可显示的变更。</p> : <div className="git-list">{status.changes.flatMap(change => [<ChangeButton key={`${change.path}:staged`} change={change} staged onOpen={open}/>, <ChangeButton key={`${change.path}:worktree`} change={change} staged={false} onOpen={open}/>])}</div>}</>}
+    {status?.available && <GitWrites key={`${task.id}:${root}`} task={task} root={Number(root)} status={status} onChanged={()=>void load()}/>}
     {diffLoading && <p role="status">正在加载差异…</p>}
     {diff && <div className="git-diff"><div><strong>{diff.path}</strong>{diff.binary && <span className="binary"><Binary size={13}/>二进制文件</span>}</div>{diff.binary ? <p>Git 将此变更识别为二进制内容，不能在此显示文本 diff。</p> : diff.text ? <pre>{diff.text}</pre> : <p>该视图没有可显示的文本差异。</p>}</div>}
   </section>;
