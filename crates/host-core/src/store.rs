@@ -155,7 +155,7 @@ impl Store {
             connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(db)?;
             connection.execute_batch("PRAGMA foreign_keys=ON;").map_err(db)?;
             let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(db)?;
-            if version > 3 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
+            if version > 4 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
             if version == 0 {
                 let tx = connection.transaction().map_err(db)?;
                 tx.execute_batch("CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,roots TEXT NOT NULL,original_roots TEXT NOT NULL,trusted INTEGER NOT NULL,archived INTEGER NOT NULL DEFAULT 0);
@@ -188,12 +188,17 @@ impl Store {
                 tx.execute_batch("ALTER TABLE task_roots ADD COLUMN source_dirty INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3;").map_err(db)?;
                 tx.commit().map_err(db)?;
             }
+            if version < 4 {
+                let tx = connection.transaction().map_err(db)?;
+                tx.execute_batch("CREATE TABLE attachments(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),name TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,created_at INTEGER NOT NULL,content BLOB NOT NULL); CREATE INDEX attachments_task ON attachments(task_id); PRAGMA user_version=4;").map_err(db)?;
+                tx.commit().map_err(db)?;
+            }
             connection.execute("UPDATE task_runs SET state='interrupted',error_code='host_interrupted',ended_at=?1 WHERE ended_at IS NULL", [now()]).map_err(db)?;
             Ok(Self { connection: Arc::new(Mutex::new(connection)) })
         }).await.map_err(db)?
     }
 
-    async fn access<T: Send + 'static>(
+    pub(crate) async fn access<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {

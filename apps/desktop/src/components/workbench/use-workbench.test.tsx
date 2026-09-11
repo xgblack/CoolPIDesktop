@@ -18,7 +18,7 @@ it('isolates drafts and a delayed send; duplicate send cannot start another requ
  let send!:Promise<void>;act(()=>{send=result.current.send('a');void result.current.send('a');});
  act(()=>{result.current.chooseTask(b);result.current.setDraft('b','message B');});
  await act(async()=>{pending.resolve(run('a'));await send;});
- expect(host.prompt).toHaveBeenCalledTimes(1);expect(host.prompt).toHaveBeenCalledWith('a','message A');
+ expect(host.prompt).toHaveBeenCalledTimes(1);expect(host.prompt).toHaveBeenCalledWith('a','message A',[]);
  expect(result.current.taskId).toBe('b');expect(result.current.drafts).toEqual({a:'',b:'message B'});
 });
 it('discards delayed history from the previously selected task',async()=>{

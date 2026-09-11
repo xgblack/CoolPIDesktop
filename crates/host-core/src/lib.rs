@@ -1,4 +1,6 @@
+pub mod attachments;
 pub mod broker;
+pub mod files;
 pub mod git;
 mod isolation;
 pub mod model_config;

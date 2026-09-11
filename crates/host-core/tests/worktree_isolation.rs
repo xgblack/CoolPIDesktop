@@ -323,3 +323,88 @@ async fn second_repository_failure_reclaims_only_worktrees_created_by_this_attem
     );
     assert!(reopened.store.validate_task_roots(&other.id).await.is_ok());
 }
+
+#[tokio::test]
+async fn task_files_reject_escape_and_symlink_and_preview_bounded_files() {
+    let root = repo();
+    let outside = root.join("outside.txt");
+    std::fs::write(&outside, "outside\n").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("one/link.txt")).unwrap();
+    std::fs::write(root.join("one/readme.txt"), "hello\n").unwrap();
+    let w = Workbench::open(root.join("data")).await.unwrap();
+    let project = w
+        .store
+        .register_project("P", vec![root.join("one")], true)
+        .await
+        .unwrap();
+    let task = w.store.create_task(&project.id, "files").await.unwrap();
+    let page = w.list_files(&task.id, 0, "").await.unwrap();
+    assert!(
+        page.entries
+            .iter()
+            .any(|e| e.name == "link.txt" && e.kind == "symlink")
+    );
+    assert_eq!(
+        w.preview_file(&task.id, 0, "readme.txt")
+            .await
+            .unwrap()
+            .text
+            .as_deref(),
+        Some("hello\n")
+    );
+    assert_eq!(
+        w.preview_file(&task.id, 0, "link.txt")
+            .await
+            .unwrap_err()
+            .code,
+        "file_path_denied"
+    );
+    for escaped in ["../outside.txt", "/tmp/nope", "readme.txt/../outside.txt"] {
+        assert_eq!(
+            w.preview_file(&task.id, 0, escaped).await.unwrap_err().code,
+            "file_path_denied"
+        );
+    }
+}
+
+#[tokio::test]
+async fn attachments_are_task_owned_and_prompt_payload_is_bounded() {
+    let root = repo();
+    let source = root.join("upload.txt");
+    std::fs::write(&source, "attachment text\n").unwrap();
+    let w = Workbench::open(root.join("data")).await.unwrap();
+    let project = w
+        .store
+        .register_project("P", vec![root.join("one")], true)
+        .await
+        .unwrap();
+    let a = w.store.create_task(&project.id, "a").await.unwrap();
+    let b = w.store.create_task(&project.id, "b").await.unwrap();
+    let imported = w.import_attachment(&a.id, &source).await.unwrap();
+    assert_eq!(w.attachments(&a.id).await.unwrap().len(), 1);
+    assert!(w.attachments(&b.id).await.unwrap().is_empty());
+    assert_eq!(
+        w.preview_attachment(&b.id, &imported.id)
+            .await
+            .unwrap_err()
+            .code,
+        "attachment_missing"
+    );
+    let payload = w
+        .attachment_prompt(&a.id, "请总结", std::slice::from_ref(&imported.id))
+        .await
+        .unwrap();
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("attachment text")
+    );
+    assert!(
+        w.attachment_prompt(&b.id, "", std::slice::from_ref(&imported.id))
+            .await
+            .unwrap_err()
+            .code
+            == "attachment_missing"
+    );
+}

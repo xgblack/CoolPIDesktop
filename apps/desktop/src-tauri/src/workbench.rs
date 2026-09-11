@@ -193,9 +193,64 @@ async fn prompt_task(
     w: State<'_, Workbench>,
     task_id: String,
     message: String,
+    attachment_ids: Option<Vec<String>>,
 ) -> Result<TaskSnapshot> {
-    w.request(&task_id, "prompt", serde_json::json!({"message":message}))
+    w.prompt_with_attachments(&task_id, &message, &attachment_ids.unwrap_or_default())
         .await
+}
+#[tauri::command]
+async fn list_task_files(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+    path: String,
+) -> Result<host_core::files::DirectoryPage> {
+    w.list_files(&task_id, root_index, &path).await
+}
+#[tauri::command]
+async fn preview_task_file(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+    path: String,
+) -> Result<host_core::files::FilePreview> {
+    w.preview_file(&task_id, root_index, &path).await
+}
+#[tauri::command]
+async fn task_attachments(
+    w: State<'_, Workbench>,
+    task_id: String,
+) -> Result<Vec<host_core::attachments::Attachment>> {
+    w.attachments(&task_id).await
+}
+#[tauri::command]
+async fn preview_task_attachment(
+    w: State<'_, Workbench>,
+    task_id: String,
+    resource_id: String,
+) -> Result<host_core::files::FilePreview> {
+    w.preview_attachment(&task_id, &resource_id).await
+}
+#[tauri::command]
+async fn import_task_attachment(
+    app: tauri::AppHandle,
+    w: State<'_, Workbench>,
+    task_id: String,
+) -> Result<Option<host_core::attachments::Attachment>> {
+    w.store.validate_task_roots(&task_id).await?;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("导入任务附件（最大 8 MiB）")
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| HostError::new("dialog_failed", e))?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path
+        .into_path()
+        .map_err(|_| HostError::new("attachment_import_failed", "无效文件路径"))?;
+    w.import_attachment(&task_id, &path).await.map(Some)
 }
 #[tauri::command]
 async fn abort_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
@@ -366,6 +421,11 @@ pub fn run() {
             list_tasks,
             task_snapshot,
             prompt_task,
+            list_task_files,
+            preview_task_file,
+            task_attachments,
+            preview_task_attachment,
+            import_task_attachment,
             abort_task,
             respond_ui,
             task_history,

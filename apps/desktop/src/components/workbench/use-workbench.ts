@@ -9,6 +9,7 @@ export function useWorkbench(){
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
  const [historyError,setHistoryError]=useState<HostError|null>(null),[historyBusy,setHistoryBusy]=useState(false),[,render]=useState(0);
  const [drafts,setDrafts]=useState<Record<string,string>>({});
+ const [attachments,setAttachments]=useState<Record<string,string[]>>({});
  const active=useRef(false),generation=useRef(0),operation=useRef(false),selection=useRef('');
  const feed=useRef(new HistoryFeed());
  const refresh=useCallback(async()=>{
@@ -44,6 +45,8 @@ export function useWorkbench(){
   try { const snapshot=await records.usage(id); if(active.current&&selection.current===id)setRuns(old=>old.map(run=>run.taskId===id&&run.runId===snapshot.runId?snapshot:run)); }
   catch(e){if(active.current&&selection.current===id)setError(hostError(e));}
  };
- const send=async(id:string)=>{const text=drafts[id]??'';if(!text.trim())return;await act(async()=>{await host.prompt(id,text);setDrafts(old=>old[id]===text?{...old,[id]:''}:old);});};
- return{projects:ps,tasks,runs,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:feed.current.messages,cursor:feed.current.cursor,drafts,setDraft,send};
+ const send=async(id:string)=>{const text=drafts[id]??'';const ids=attachments[id]??[];if(!text.trim()&&!ids.length)return;await act(async()=>{await host.prompt(id,text,ids);setDrafts(old=>old[id]===text?{...old,[id]:''}:old);setAttachments(old=>({...old,[id]:[]}));});};
+ const addAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:[...new Set([...(old[id]??[]),resource])].slice(0,8)}));
+ const removeAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:(old[id]??[]).filter(value=>value!==resource)}));
+ return{projects:ps,tasks,runs,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:feed.current.messages,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send};
 }

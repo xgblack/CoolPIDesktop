@@ -11,6 +11,10 @@ export interface GitChange{path:string;originalPath?:string|null;indexStatus:str
 export interface GitStatus{rootIndex:number;available:boolean;branch?:string|null;changes:GitChange[]}
 export interface GitDiff{rootIndex:number;path:string;staged:boolean;text:string;binary:boolean}
 export interface TaskRoot{taskId:string;rootIndex:number;originalRoot:string;executionPath:string;gitTopLevel?:string|null;relativePath?:string|null;mode:'shared'|'isolated'|string;baselineCommit?:string|null;branch?:string|null;worktreePath?:string|null;status:string;createdByClient:boolean;sourceDirty:boolean}
+export interface FileEntry{name:string;path:string;kind:'file'|'directory'|'symlink'|'special'|'unsupported'|'unavailable';size:number|null}
+export interface DirectoryPage{entries:FileEntry[];truncated:boolean}
+export interface FilePreview{name:string;size:number;state:'text'|'binary'|'too_large';text:string|null}
+export interface Attachment{id:string;taskId:string;name:string;mime:string;size:number;createdAt:number}
 export interface ObserverInfo{url:string;token:string}
 export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
 export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}

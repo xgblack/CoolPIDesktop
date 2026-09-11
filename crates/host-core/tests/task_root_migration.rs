@@ -87,7 +87,7 @@ async fn v1_backfills_all_roots_without_rewriting_tasks_or_session_bindings() {
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            3
+            4
         );
         assert_eq!(
             c.query_row("SELECT count(*) FROM task_roots", [], |r| r
@@ -156,6 +156,6 @@ async fn v2_upgrade_preserves_existing_isolated_mapping_and_defaults_source_dirt
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
 }
