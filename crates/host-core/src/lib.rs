@@ -8,6 +8,7 @@ mod runtime;
 pub mod session;
 pub mod store;
 mod task;
+pub mod terminal;
 pub mod workspace;
 pub use broker::ObserverInfo;
 pub use runtime::{HostError, RuntimeInfo, probe, resolve_executable};

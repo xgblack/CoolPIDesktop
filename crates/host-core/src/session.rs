@@ -1,6 +1,7 @@
 use crate::git::{self, GitDiff, GitStatus};
 use crate::runtime::Result;
 use crate::store::{Store, TaskRecord};
+use crate::terminal::TerminalService;
 use crate::{HostError, LaunchOptions, TaskManager, TaskSnapshot};
 use serde_json::{Value, json};
 use std::{
@@ -18,6 +19,7 @@ pub struct Workbench {
     pub runtime: TaskManager,
     pub(crate) data: PathBuf,
     pub(crate) gate: Arc<Mutex<()>>,
+    pub(crate) terminals: TerminalService,
 }
 // Only identity metadata is inspected here. OMP alone loads messages and resolves blobs.
 fn session_header(file: &Path) -> Result<Value> {
@@ -80,6 +82,7 @@ impl Workbench {
             store,
             data,
             gate: Default::default(),
+            terminals: Default::default(),
         })
     }
     pub async fn detect(&self, explicit: Option<String>) -> crate::RuntimeInfo {
@@ -279,6 +282,7 @@ impl Workbench {
     }
     async fn stop_locked(&self, id: &str) -> Result<TaskSnapshot> {
         self.runtime.stop(id).await?;
+        self.terminals.close_task(id).await;
         let snapshot = self.runtime.snapshot(id).await?;
         self.store
             .end_run(
@@ -533,6 +537,7 @@ impl Workbench {
                 error = Some(e);
             }
         }
+        self.terminals.close_all().await;
         error.map_or(Ok(()), Err)
     }
 }

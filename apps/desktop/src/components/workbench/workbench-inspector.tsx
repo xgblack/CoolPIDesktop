@@ -6,6 +6,7 @@ import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/c
 import {ErrorNotice} from '@/components/workbench/shared';
 import {TooltipProvider} from '@/components/ui/tooltip';
 import {FilesPanel} from './files-panel';
+import {TerminalPanel} from './terminal-panel';
 import type {Attachment, GitChange, GitDiff, GitStatus, HostError, TaskRecord, TaskRoot, TaskSnapshot, ToolActivity, UsageSummary} from '../../../../../packages/host-contract/src';
 
 const display = (value: unknown) => JSON.stringify(value, null, 2);
@@ -64,5 +65,5 @@ function ExecutionRoots({task}: {task: TaskRecord}) {
 }
 
 export function WorkbenchInspector({task, run, busy, onRefreshUsage, onAttach, selected}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void; onAttach?: (a:Attachment)=>void; selected?:string[]}) {
-  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside></TooltipProvider>;
+  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/><TerminalPanel task={task}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside></TooltipProvider>;
 }

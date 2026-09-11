@@ -253,6 +253,49 @@ async fn import_task_attachment(
     w.import_attachment(&task_id, &path).await.map(Some)
 }
 #[tauri::command]
+async fn terminal_create(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+) -> Result<host_core::terminal::TerminalSnapshot> {
+    w.terminal_create(&task_id, root_index).await
+}
+#[tauri::command]
+async fn terminal_snapshot(
+    w: State<'_, Workbench>,
+    task_id: String,
+    terminal_id: String,
+) -> Result<host_core::terminal::TerminalSnapshot> {
+    w.terminal_snapshot(&task_id, &terminal_id).await
+}
+#[tauri::command]
+async fn terminal_write(
+    w: State<'_, Workbench>,
+    task_id: String,
+    terminal_id: String,
+    input: String,
+) -> Result<()> {
+    w.terminal_write(&task_id, &terminal_id, input).await
+}
+#[tauri::command]
+async fn terminal_resize(
+    w: State<'_, Workbench>,
+    task_id: String,
+    terminal_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<()> {
+    w.terminal_resize(&task_id, &terminal_id, cols, rows).await
+}
+#[tauri::command]
+async fn terminal_close(
+    w: State<'_, Workbench>,
+    task_id: String,
+    terminal_id: String,
+) -> Result<()> {
+    w.terminal_close(&task_id, &terminal_id).await
+}
+#[tauri::command]
 async fn abort_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
     w.request(&task_id, "abort", serde_json::json!({})).await
 }
@@ -426,6 +469,11 @@ pub fn run() {
             task_attachments,
             preview_task_attachment,
             import_task_attachment,
+            terminal_create,
+            terminal_snapshot,
+            terminal_write,
+            terminal_resize,
+            terminal_close,
             abort_task,
             respond_ui,
             task_history,

@@ -16,3 +16,5 @@ export const resources={
  import:(taskId:string)=>invoke<Attachment|null>('import_task_attachment',{taskId}),
  previewAttachment:(taskId:string,resourceId:string)=>invoke<FilePreview>('preview_task_attachment',{taskId,resourceId}),
 };
+import type {TerminalSnapshot} from '../../../packages/host-contract/src';
+export const terminal={create:(taskId:string,rootIndex:number)=>invoke<TerminalSnapshot>('terminal_create',{taskId,rootIndex}),snapshot:(taskId:string,terminalId:string)=>invoke<TerminalSnapshot>('terminal_snapshot',{taskId,terminalId}),write:(taskId:string,terminalId:string,input:string)=>invoke<void>('terminal_write',{taskId,terminalId,input}),resize:(taskId:string,terminalId:string,cols:number,rows:number)=>invoke<void>('terminal_resize',{taskId,terminalId,cols,rows}),close:(taskId:string,terminalId:string)=>invoke<void>('terminal_close',{taskId,terminalId})};

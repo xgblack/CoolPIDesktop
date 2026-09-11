@@ -15,6 +15,7 @@ export interface FileEntry{name:string;path:string;kind:'file'|'directory'|'syml
 export interface DirectoryPage{entries:FileEntry[];truncated:boolean}
 export interface FilePreview{name:string;size:number;state:'text'|'binary'|'too_large';text:string|null}
 export interface Attachment{id:string;taskId:string;name:string;mime:string;size:number;createdAt:number}
+export interface TerminalSnapshot{id:string;taskId:string;output:string;exited:boolean;exitCode:number|null}
 export interface ObserverInfo{url:string;token:string}
 export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
 export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
