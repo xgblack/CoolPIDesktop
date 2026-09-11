@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import {afterEach, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {act, cleanup, fireEvent, render, screen} from '@testing-library/react';
 import {WorkbenchInspector} from './workbench-inspector';
-import {records} from '@/host';
+import {host,records} from '@/host';
 import type {TaskRecord, TaskSnapshot} from '../../../../../packages/host-contract/src';
-vi.mock('@/host', () => ({records: {gitStatus: vi.fn(), gitDiff: vi.fn()}, hostError: (e: unknown) => e}));
+vi.mock('@/host', () => ({host: {roots: vi.fn().mockResolvedValue([])}, records: {gitStatus: vi.fn(), gitDiff: vi.fn()}, hostError: (e: unknown) => e}));
 afterEach(() => {cleanup(); vi.resetAllMocks();});
+beforeEach(() => { vi.mocked(host.roots).mockResolvedValue([]); });
 const task = (id: string) => ({id, roots: ['/tmp/project']} as TaskRecord);
 const props = {busy: false, onRefreshUsage: vi.fn()};
 it('keeps null usage unknown and reports Git failures without claiming a non-repository', async () => {

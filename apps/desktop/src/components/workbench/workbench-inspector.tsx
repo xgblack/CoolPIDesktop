@@ -1,10 +1,10 @@
 import {useEffect, useRef, useState} from 'react';
 import {Binary, ChevronDown, ChevronRight, GitBranch, RefreshCw, Wrench} from 'lucide-react';
-import {hostError, records} from '@/host';
+import {host, hostError, records} from '@/host';
 import {Button} from '@/components/ui/button';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
 import {ErrorNotice} from '@/components/workbench/shared';
-import type {GitChange, GitDiff, GitStatus, HostError, TaskRecord, TaskSnapshot, ToolActivity, UsageSummary} from '../../../../../packages/host-contract/src';
+import type {GitChange, GitDiff, GitStatus, HostError, TaskRecord, TaskRoot, TaskSnapshot, ToolActivity, UsageSummary} from '../../../../../packages/host-contract/src';
 
 const display = (value: unknown) => JSON.stringify(value, null, 2);
 function NumberValue({value, suffix = ''}: {value?: number; suffix?: string}) { return <span>{value === undefined || value === null ? '未知' : `${new Intl.NumberFormat('zh-CN', {maximumFractionDigits: 2}).format(value)}${suffix}`}</span>; }
@@ -55,6 +55,12 @@ function Git({task}: {task: TaskRecord}) {
   </section>;
 }
 
+function ExecutionRoots({task}: {task: TaskRecord}) {
+  const [roots, setRoots] = useState<TaskRoot[]>();
+  useEffect(() => { let active = true; void host.roots(task.id).then(value => { if (active) setRoots(value); }).catch(() => { if (active) setRoots([]); }); return () => { active = false; }; }, [task.id]);
+  return <section className="inspector-section" aria-label="执行目录"><div className="inspector-heading"><div><h2>执行目录</h2><p>任务实际使用的目录映射</p></div></div>{roots?.map(root => <div className="root-path" key={root.rootIndex}><span>{root.rootIndex === 0 ? '主目录' : `附加目录 ${root.rootIndex}`} · {root.mode === 'isolated' ? '隔离' : '共享'}</span><code className="break-all">{root.executionPath}</code>{root.branch && <small>分支：{root.branch}</small>}{root.baselineCommit && <small>基线：{root.baselineCommit.slice(0, 12)}</small>}{root.sourceDirty && <small className="text-amber-600">未提交改动未包含在新任务中</small>}</div>)}</section>;
+}
+
 export function WorkbenchInspector({task, run, busy, onRefreshUsage}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void}) {
-  return <aside className="workbench-inspector" aria-label="工作台详情"><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside>;
+  return <aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside>;
 }

@@ -37,6 +37,24 @@ pub struct TaskRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskRoot {
+    pub task_id: String,
+    pub root_index: usize,
+    pub original_root: PathBuf,
+    pub execution_path: PathBuf,
+    pub git_top_level: Option<PathBuf>,
+    pub relative_path: Option<PathBuf>,
+    pub mode: String,
+    pub baseline_commit: Option<String>,
+    pub branch: Option<String>,
+    pub worktree_path: Option<PathBuf>,
+    pub status: String,
+    pub created_by_client: bool,
+    pub source_dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskRun {
     pub id: String,
     pub task_id: String,
@@ -137,7 +155,7 @@ impl Store {
             connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(db)?;
             connection.execute_batch("PRAGMA foreign_keys=ON;").map_err(db)?;
             let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(db)?;
-            if version > 1 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
+            if version > 3 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
             if version == 0 {
                 let tx = connection.transaction().map_err(db)?;
                 tx.execute_batch("CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,roots TEXT NOT NULL,original_roots TEXT NOT NULL,trusted INTEGER NOT NULL,archived INTEGER NOT NULL DEFAULT 0);
@@ -148,6 +166,26 @@ impl Store {
                     CREATE UNIQUE INDEX one_active_run ON task_runs(task_id) WHERE ended_at IS NULL;
                     CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
                     PRAGMA user_version=1;").map_err(db)?;
+                tx.commit().map_err(db)?;
+            }
+            if version < 2 {
+                let tx = connection.transaction().map_err(db)?;
+                tx.execute_batch("CREATE TABLE IF NOT EXISTS task_roots(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,root_index INTEGER NOT NULL,original_root TEXT NOT NULL,execution_path TEXT NOT NULL,git_top_level TEXT,relative_path TEXT,mode TEXT NOT NULL,baseline_commit TEXT,branch TEXT,worktree_path TEXT,status TEXT NOT NULL,created_by_client INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(task_id,root_index));").map_err(db)?;
+                let mut stmt = tx.prepare("SELECT id,roots FROM tasks").map_err(db)?;
+                let rows = stmt.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?))).map_err(db)?;
+                for row in rows {
+                    let (task_id, raw) = row.map_err(db)?;
+                    for (index, root) in paths(raw).map_err(db)?.into_iter().enumerate() {
+                        tx.execute("INSERT OR IGNORE INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![task_id,index as i64,root.to_string_lossy()]).map_err(db)?;
+                    }
+                }
+                drop(stmt);
+                tx.execute_batch("PRAGMA user_version=2;").map_err(db)?;
+                tx.commit().map_err(db)?;
+            }
+            if version < 3 {
+                let tx = connection.transaction().map_err(db)?;
+                tx.execute_batch("ALTER TABLE task_roots ADD COLUMN source_dirty INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3;").map_err(db)?;
                 tx.commit().map_err(db)?;
             }
             connection.execute("UPDATE task_runs SET state='interrupted',error_code='host_interrupted',ended_at=?1 WHERE ended_at IS NULL", [now()]).map_err(db)?;
@@ -314,20 +352,60 @@ impl Store {
             let (roots,original,trusted,archived):(String,String,bool,bool)=c.query_row("SELECT roots,original_roots,trusted,archived FROM projects WHERE id=?1",[&project_id],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(db)?.ok_or_else(|| HostError::new("project_missing","Unknown project"))?;
             if archived { return Err(HostError::new("project_archived","Cannot add task to archived project")); }
             let id=uuid::Uuid::new_v4().to_string();
-            c.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",params![id,project_id,title,roots,original,trusted,now()]).map_err(db)?;
+            let tx = c.transaction().map_err(db)?;
+            tx.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",params![id,project_id,title,roots,original,trusted,now()]).map_err(db)?;
+            for (index, root) in paths(roots.clone()).map_err(db)?.into_iter().enumerate() {
+                tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
+            }
+            tx.commit().map_err(db)?;
             c.query_row(&format!("{TASK_QUERY} WHERE t.id=?1"),[id],task_row).map_err(db)
         }).await
     }
 
-    pub async fn validate_task_roots(&self, id: &str) -> Result<Vec<PathBuf>> {
+    pub async fn task_roots(&self, id: &str) -> Result<Vec<TaskRoot>> {
         let id = id.to_owned();
         self.access(move |c| {
-            let (roots,original,trusted,archived):(String,String,bool,bool)=c.query_row("SELECT t.roots,t.original_roots,t.trusted,(t.archived OR p.archived) FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=?1",[id],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(db)?;
+            let mut stmt = c.prepare("SELECT task_id,root_index,original_root,execution_path,git_top_level,relative_path,mode,baseline_commit,branch,worktree_path,status,created_by_client,source_dirty FROM task_roots WHERE task_id=?1 ORDER BY root_index").map_err(db)?;
+            stmt.query_map([id], |r| Ok(TaskRoot { task_id:r.get(0)?, root_index:r.get::<_,i64>(1)? as usize, original_root:PathBuf::from(r.get::<_,String>(2)?), execution_path:PathBuf::from(r.get::<_,String>(3)?), git_top_level:r.get::<_,Option<String>>(4)?.map(PathBuf::from), relative_path:r.get::<_,Option<String>>(5)?.map(PathBuf::from), mode:r.get(6)?, baseline_commit:r.get(7)?, branch:r.get(8)?, worktree_path:r.get::<_,Option<String>>(9)?.map(PathBuf::from), status:r.get(10)?, created_by_client:r.get(11)?, source_dirty:r.get(12)? })).map_err(db)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db)
+        }).await
+    }
+
+    pub async fn update_task_roots(&self, roots: Vec<TaskRoot>) -> Result<()> {
+        self.access(move |c| {
+            let tx = c.transaction().map_err(db)?;
+            for root in roots {
+                tx.execute("UPDATE task_roots SET execution_path=?3,git_top_level=?4,relative_path=?5,mode=?6,baseline_commit=?7,branch=?8,worktree_path=?9,status=?10,created_by_client=?11,source_dirty=?12 WHERE task_id=?1 AND root_index=?2", params![root.task_id,root.root_index as i64,root.execution_path.to_string_lossy(),root.git_top_level.map(|p|p.to_string_lossy().into_owned()),root.relative_path.map(|p|p.to_string_lossy().into_owned()),root.mode,root.baseline_commit,root.branch,root.worktree_path.map(|p|p.to_string_lossy().into_owned()),root.status,root.created_by_client,root.source_dirty]).map_err(db)?;
+            }
+            tx.commit().map_err(db)
+        }).await
+    }
+
+    pub async fn validate_task_roots(&self, id: &str) -> Result<Vec<PathBuf>> {
+        let task_id = id.to_owned();
+        let id = id.to_owned();
+        let mapped = self.access(move |c| {
+            let (roots,original,trusted,archived):(String,String,bool,bool)=c.query_row("SELECT t.roots,t.original_roots,t.trusted,(t.archived OR p.archived) FROM tasks t JOIN projects p ON p.id=t.project_id WHERE t.id=?1",[&id],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(db)?;
             if archived { return Err(HostError::new("task_archived","Unarchive task and project before continuing")); }
             let roots=paths(roots).map_err(db)?;
             workspace::verify_snapshot(&paths(original).map_err(db)?, &roots, trusted)?;
-            Ok(roots)
-        }).await
+            let mut mapped = Vec::new();
+            let mut stmt = c.prepare("SELECT execution_path,mode,status FROM task_roots WHERE task_id=?1 ORDER BY root_index").map_err(db)?;
+            let rows = stmt.query_map([id.clone()], |r| Ok((PathBuf::from(r.get::<_,String>(0)?), r.get::<_,String>(1)?, r.get::<_,String>(2)?))).map_err(db)?;
+            for row in rows {
+                let (path, mode, status) = row.map_err(db)?;
+                if status != "ready" { return Err(HostError::new("worktree_missing", format!("Task root is not ready ({mode})"))); }
+                if !path.is_dir() { return Err(HostError::new("worktree_missing", "Task execution directory is missing")); }
+                mapped.push(path);
+            }
+            if mapped.len() != roots.len() { return Err(HostError::new("worktree_missing", "Incomplete task root mapping")); }
+            Ok(mapped)
+        }).await?;
+        for root in self.task_roots(&task_id).await? {
+            if root.mode == "isolated" {
+                crate::isolation::verify(&root).await?;
+            }
+        }
+        Ok(mapped)
     }
 
     pub async fn update_task(
@@ -379,6 +457,9 @@ impl Store {
                     "Confirm trust for the relocated directory before starting OMP",
                 ));
             }
+            if c.query_row("SELECT EXISTS(SELECT 1 FROM task_roots WHERE task_id=?1 AND mode!='shared')", [&id], |r| r.get::<_,bool>(0)).map_err(db)? {
+                return Err(HostError::new("worktree_recovery_required", "隔离任务须复核原 worktree，不能重新定位为共享目录"));
+            }
             let original = serde_json::to_string(&roots).map_err(db)?;
             let roots = workspace::validate_roots(&roots)?;
             if c.query_row(
@@ -403,6 +484,12 @@ impl Store {
             {
                 return Err(HostError::new("task_missing", "Unknown task"));
             }
+            let tx = c.transaction().map_err(db)?;
+            tx.execute("DELETE FROM task_roots WHERE task_id=?1", [&id]).map_err(db)?;
+            for (index, root) in paths(json.clone()).map_err(db)?.into_iter().enumerate() {
+                tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status,source_dirty) VALUES(?1,?2,?3,?3,'shared','ready',0)", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
+            }
+            tx.commit().map_err(db)?;
             c.query_row(&format!("{TASK_QUERY} WHERE t.id=?1"), [&id], task_row)
                 .map_err(db)
         })

@@ -2,7 +2,11 @@ use host_core::Workbench;
 use std::{path::Path, process::Command};
 
 fn command(root: &Path, args: &[&str]) {
-    let status = Command::new("git").current_dir(root).args(args).status().unwrap();
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .status()
+        .unwrap();
     assert!(status.success(), "git {args:?} failed");
 }
 
@@ -22,18 +26,69 @@ async fn workbench_exposes_only_read_only_task_scoped_git_data() {
     std::fs::write(root.join("untracked.txt"), "untracked change\n").unwrap();
 
     let workbench = Workbench::open(root.join("data")).await.unwrap();
-    let project = workbench.store.register_project("Git", vec![root.clone()], true).await.unwrap();
-    let task = workbench.store.create_task(&project.id, "Diff").await.unwrap();
+    let project = workbench
+        .store
+        .register_project("Git", vec![root.clone()], true)
+        .await
+        .unwrap();
+    let task = workbench
+        .store
+        .create_task(&project.id, "Diff")
+        .await
+        .unwrap();
     let status = workbench.git_status(&task.id, 0).await.unwrap();
     assert!(status.available);
-    assert!(status.changes.iter().any(|change| change.path == "tracked.txt" && change.worktree_status == "M"));
-    assert!(status.changes.iter().any(|change| change.path == "staged.txt" && change.index_status == "A"));
-    assert!(status.changes.iter().any(|change| change.path == "untracked.txt" && change.kind == "untracked"));
+    assert!(
+        status
+            .changes
+            .iter()
+            .any(|change| change.path == "tracked.txt" && change.worktree_status == "M")
+    );
+    assert!(
+        status
+            .changes
+            .iter()
+            .any(|change| change.path == "staged.txt" && change.index_status == "A")
+    );
+    assert!(
+        status
+            .changes
+            .iter()
+            .any(|change| change.path == "untracked.txt" && change.kind == "untracked")
+    );
 
-    assert!(workbench.git_diff(&task.id, 0, "tracked.txt", false, false).await.unwrap().text.contains("worktree change"));
-    assert!(workbench.git_diff(&task.id, 0, "staged.txt", true, false).await.unwrap().text.contains("staged change"));
-    assert!(workbench.git_diff(&task.id, 0, "untracked.txt", false, true).await.unwrap().text.contains("untracked change"));
-    assert_eq!(workbench.git_diff(&task.id, 0, "../outside", false, false).await.unwrap_err().code, "invalid_git_path");
+    assert!(
+        workbench
+            .git_diff(&task.id, 0, "tracked.txt", false, false)
+            .await
+            .unwrap()
+            .text
+            .contains("worktree change")
+    );
+    assert!(
+        workbench
+            .git_diff(&task.id, 0, "staged.txt", true, false)
+            .await
+            .unwrap()
+            .text
+            .contains("staged change")
+    );
+    assert!(
+        workbench
+            .git_diff(&task.id, 0, "untracked.txt", false, true)
+            .await
+            .unwrap()
+            .text
+            .contains("untracked change")
+    );
+    assert_eq!(
+        workbench
+            .git_diff(&task.id, 0, "../outside", false, false)
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_git_path"
+    );
 }
 
 #[tokio::test]
@@ -52,14 +107,34 @@ async fn git_view_is_scoped_when_a_task_root_is_a_repository_subdirectory() {
     std::fs::write(root.join("outside/private.txt"), "private change\n").unwrap();
 
     let workbench = Workbench::open(root.join("data")).await.unwrap();
-    let project = workbench.store.register_project("Scoped", vec![root.join("task")], true).await.unwrap();
-    let task = workbench.store.create_task(&project.id, "Scoped diff").await.unwrap();
+    let project = workbench
+        .store
+        .register_project("Scoped", vec![root.join("task")], true)
+        .await
+        .unwrap();
+    let task = workbench
+        .store
+        .create_task(&project.id, "Scoped diff")
+        .await
+        .unwrap();
     let status = workbench.git_status(&task.id, 0).await.unwrap();
 
     assert_eq!(status.changes.len(), 1);
     assert_eq!(status.changes[0].path, "inside.txt");
-    assert!(workbench.git_diff(&task.id, 0, "inside.txt", false, false).await.unwrap().text.contains("changed"));
-    assert!(workbench.git_diff(&task.id, 0, "../outside/private.txt", false, false).await.is_err());
+    assert!(
+        workbench
+            .git_diff(&task.id, 0, "inside.txt", false, false)
+            .await
+            .unwrap()
+            .text
+            .contains("changed")
+    );
+    assert!(
+        workbench
+            .git_diff(&task.id, 0, "../outside/private.txt", false, false)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -71,8 +146,14 @@ async fn unborn_repository_and_literal_paths_and_missing_diff() {
     std::fs::write(root.join("literal-other.txt"), "other\n").unwrap();
     assert!(host_core::git::status(&root, 0).await.unwrap().available);
     command(&root, &["add", "."]);
-    let diff = host_core::git::diff(&root, 0, "literal*.txt", true, false).await.unwrap();
+    let diff = host_core::git::diff(&root, 0, "literal*.txt", true, false)
+        .await
+        .unwrap();
     assert!(diff.text.contains("+literal"));
     assert!(!diff.text.contains("+other"));
-    assert!(host_core::git::diff(&root, 0, "missing.txt", false, true).await.is_err());
+    assert!(
+        host_core::git::diff(&root, 0, "missing.txt", false, true)
+            .await
+            .is_err()
+    );
 }

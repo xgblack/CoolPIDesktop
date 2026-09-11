@@ -1,5 +1,6 @@
 pub mod broker;
 pub mod git;
+mod isolation;
 pub mod model_config;
 mod runtime;
 pub mod session;

@@ -1,6 +1,6 @@
 import {ModelSettings} from './model-settings';
 import {useState} from 'react';
-import {Copy,FolderOpen,Monitor,Sun,Moon,Search,LoaderCircle} from 'lucide-react';
+import {Copy,FolderOpen,Monitor,Sun,Moon,Search,LoaderCircle,GitBranch,Users} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
@@ -11,12 +11,13 @@ import {ErrorNotice} from './shared';
 import type {HostError,RuntimeInfo,TaskRecord} from '../../../../../packages/host-contract/src';
 import type {Theme} from './theme';
 
-export function NameDialog({kind,initial,onClose,onSubmit,restoreFocus}:{kind:'project'|'task'|'rename';initial:string;onClose:()=>void;onSubmit:(name:string,trusted:boolean)=>Promise<void>;restoreFocus:()=>void}){
- const [value,setValue]=useState(initial),[trusted,setTrusted]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
+export function NameDialog({kind,initial,onClose,onSubmit,restoreFocus}:{kind:'project'|'task'|'rename';initial:string;onClose:()=>void;onSubmit:(name:string,trusted:boolean,mode:'shared'|'isolated')=>Promise<void>;restoreFocus:()=>void}){
+ const [value,setValue]=useState(initial),[trusted,setTrusted]=useState(false),[mode,setMode]=useState<'shared'|'isolated'>('shared'),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
  const title=kind==='project'?'添加项目':kind==='task'?'创建任务':'重命名';
- return <Dialog open onOpenChange={v=>{if(!v&&!busy)onClose();}}><DialogContent onCloseAutoFocus={e=>{e.preventDefault();restoreFocus();}}><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{kind==='project'?'通过系统目录选择器登记主目录及附加目录。第一项为主目录。':kind==='task'?'任务保留自己的会话和目录快照，创建后不会自动启动 OMP。':'修改显示名称，不改变任务或会话身份。'}</DialogDescription></DialogHeader><form onSubmit={e=>{e.preventDefault();if(!value.trim()){setError({code:'invalid_name',message:'请输入名称'});return;}setBusy(true);setError(null);void onSubmit(value.trim(),trusted).then(onClose).catch(e=>setError(hostError(e))).finally(()=>setBusy(false));}}>
+ return <Dialog open onOpenChange={v=>{if(!v&&!busy)onClose();}}><DialogContent onCloseAutoFocus={e=>{e.preventDefault();restoreFocus();}}><DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{kind==='project'?'通过系统目录选择器登记主目录及附加目录。第一项为主目录。':kind==='task'?'任务保留自己的会话和目录快照，创建后不会自动启动 OMP。':'修改显示名称，不改变任务或会话身份。'}</DialogDescription></DialogHeader><form onSubmit={e=>{e.preventDefault();if(!value.trim()){setError({code:'invalid_name',message:'请输入名称'});return;}setBusy(true);setError(null);void onSubmit(value.trim(),trusted,mode).then(onClose).catch(e=>setError(hostError(e))).finally(()=>setBusy(false));}}>
   <Label htmlFor="name-field">名称</Label><Input id="name-field" autoFocus value={value} onChange={e=>setValue(e.target.value)} maxLength={160} aria-invalid={!!error} className="mt-2"/>
   {kind==='project'&&<label className="trust-label"><Checkbox checked={trusted} onCheckedChange={v=>setTrusted(v===true)}/><span>我信任所选目录中的配置与扩展，允许 OMP 加载它们。</span></label>}
+  {kind==='task'&&<div className="space-y-2"><Label>执行目录</Label><div className="flex gap-2"><Button type="button" variant={mode==='shared'?'secondary':'outline'} onClick={()=>setMode('shared')}><Users/>共享目录</Button><Button type="button" variant={mode==='isolated'?'secondary':'outline'} onClick={()=>setMode('isolated')}><GitBranch/>隔离 worktree</Button></div>{mode==='isolated'&&<p className="text-xs text-muted-foreground">仅支持 Git 根目录。同一仓库会共用一个 worktree；未提交改动不包含在新任务中。</p>}</div>}
   <ErrorNotice error={error}/><DialogFooter className="mt-5"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button><Button disabled={busy||!value.trim()||kind==='project'&&!trusted}>{busy?<LoaderCircle className="animate-spin"/>:kind==='project'?<FolderOpen/>:null}{kind==='project'?'选择目录':busy?'保存中':'保存'}</Button></DialogFooter>
  </form></DialogContent></Dialog>;
 }
