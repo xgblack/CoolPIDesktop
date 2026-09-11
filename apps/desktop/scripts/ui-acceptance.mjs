@@ -19,6 +19,9 @@ try {
    window.__TAURI_INTERNALS__={invoke:async(cmd,args={})=>{window.__calls.push({cmd,args});switch(cmd){
     case 'list_projects':return[project];case 'task_records':return[task('a'),task('b')];case 'list_tasks':return Object.values(runs);
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
+    case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
+    case 'task_git_diff':return{rootIndex:args.rootIndex,path:args.path,staged:false,binary:false,text:'diff --git a/src/workbench.tsx b/src/workbench.tsx\n-old content\n+new content'};
+    case 'task_usage':return runs[args.taskId];
     case 'task_history':return{messages:args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}],totalMessages:3};
     case 'select_task_model':throw{code:'model_unavailable',message:'模型切换失败，保留当前实际模型',suggestion:'检查模型配置。'};
     case 'model_config_load':return{path:'/isolated/models.yml',exists:false,revision:'missing',providers:[]};
@@ -45,6 +48,11 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.equal(await page.locator('img').count(),0);
   await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'.png'});
+  if(width<900)await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
+  await page.getByRole('button',{name:'工作区 M src/workbench.tsx'}).click();
+  await page.getByText('+new content',{exact:false}).waitFor();
+  await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'-inspector.png'});
+  if(width<900)await page.keyboard.press('Escape');
   await page.getByRole('combobox',{name:'任务模型'}).click();await page.getByRole('option',{name:'test/another-model'}).click();
   await page.getByText('模型切换失败，保留当前实际模型').waitFor();
   assert.match(await page.getByRole('combobox',{name:'任务模型'}).innerText(),/qwen3.7-flash/);
@@ -57,5 +65,5 @@ try {
   assert.deepEqual(errors,[]);
   await page.close();
  }
- console.log('UI acceptance: 6 viewport/theme combinations passed; 12 screenshots in '+output);
+ console.log('UI acceptance: 6 viewport/theme combinations passed; 18 screenshots in '+output);
 }finally{await browser.close();}

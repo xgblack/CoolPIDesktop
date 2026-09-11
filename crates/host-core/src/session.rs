@@ -1,6 +1,7 @@
 use crate::runtime::Result;
 use crate::store::{Store, TaskRecord};
 use crate::{HostError, LaunchOptions, TaskManager, TaskSnapshot};
+use crate::git::{self, GitDiff, GitStatus};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read},
@@ -364,6 +365,27 @@ impl Workbench {
             request["cursor"] = Value::String(cursor);
         }
         self.runtime.query(id, "get_messages_page", request).await
+    }
+    /// Refreshes only usage fields OMP actually reports. It never estimates a missing value.
+    pub async fn refresh_usage(&self, id: &str) -> Result<TaskSnapshot> {
+        let _guard = self.gate.lock().await;
+        self.runtime.query(id, "get_state", json!({})).await?;
+        self.runtime.query(id, "get_session_stats", json!({})).await?;
+        self.runtime.snapshot(id).await
+    }
+    async fn git_root(&self, id: &str, root_index: usize) -> Result<PathBuf> {
+        let roots = self.store.validate_task_roots(id).await?;
+        roots.get(root_index).cloned().ok_or_else(|| HostError::new("invalid_git_root", "Selected directory is not part of this task"))
+    }
+    pub async fn git_status(&self, id: &str, root_index: usize) -> Result<GitStatus> {
+        let _guard = self.gate.lock().await;
+        let root = self.git_root(id, root_index).await?;
+        git::status(&root, root_index).await
+    }
+    pub async fn git_diff(&self, id: &str, root_index: usize, path: &str, staged: bool, untracked: bool) -> Result<GitDiff> {
+        let _guard = self.gate.lock().await;
+        let root = self.git_root(id, root_index).await?;
+        git::diff(&root, root_index, path, staged, untracked).await
     }
     pub async fn select_model(&self, id: &str, provider: &str, model_id: &str) -> Result<Value> {
         let _guard = self.gate.lock().await;

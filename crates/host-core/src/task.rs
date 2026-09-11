@@ -33,6 +33,40 @@ pub struct HostEvent {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ToolActivity {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub args: Value,
+    pub result: Option<Value>,
+    pub seq: u64,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskSnapshot {
     pub task_id: String,
     pub run_id: String,
@@ -44,6 +78,57 @@ pub struct TaskSnapshot {
     pub runtime: RuntimeInfo,
     pub error: Option<HostError>,
     pub pending_ui: Vec<Value>,
+    #[serde(default)]
+    pub tools: Vec<ToolActivity>,
+    #[serde(default)]
+    pub usage: UsageSummary,
+}
+fn bounded_value(value: &Value) -> Value {
+    const LIMIT: usize = 64 * 1024;
+    if serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > LIMIT) {
+        json!({"truncated":true,"message":"Tool data exceeds the 64 KiB workbench limit; the full record remains in OMP"})
+    } else { value.clone() }
+}
+fn update_usage(snapshot: &mut TaskSnapshot, typ: &str, data: &Value) {
+    if typ == "get_state" {
+        let context = &data["contextUsage"];
+        snapshot.usage.context_tokens = context["tokens"].as_u64();
+        snapshot.usage.context_window = context["contextWindow"].as_u64();
+        snapshot.usage.context_percent = context["percent"].as_f64();
+    }
+    if typ == "get_session_stats" {
+        let tokens = &data["tokens"];
+        snapshot.usage.input_tokens = tokens["input"].as_u64();
+        snapshot.usage.output_tokens = tokens["output"].as_u64();
+        snapshot.usage.reasoning_tokens = tokens["reasoning"].as_u64();
+        snapshot.usage.cache_read_tokens = tokens["cacheRead"].as_u64();
+        snapshot.usage.cache_write_tokens = tokens["cacheWrite"].as_u64();
+        snapshot.usage.total_tokens = tokens["total"].as_u64();
+        snapshot.usage.cost = data["cost"].as_f64();
+    }
+}
+fn update_tool(snapshot: &mut TaskSnapshot, typ: &str, event: &Value) {
+    let Some(id) = event["toolCallId"].as_str() else { return };
+    match typ {
+        "tool_execution_start" => {
+            if let Some(tool) = snapshot.tools.iter_mut().find(|tool| tool.id == id) {
+                tool.name = event["toolName"].as_str().unwrap_or("工具").into();
+                tool.status = "running".into(); tool.args = bounded_value(&event["args"]); tool.result = None; tool.seq = snapshot.seq;
+            } else if snapshot.tools.len() < 64 {
+                snapshot.tools.push(ToolActivity { id: id.into(), name: event["toolName"].as_str().unwrap_or("工具").into(), status: "running".into(), args: bounded_value(&event["args"]), result: None, seq: snapshot.seq });
+            } else { snapshot.truncated = true; }
+        }
+        "tool_execution_update" => {
+            if let Some(tool) = snapshot.tools.iter_mut().find(|tool| tool.id == id) { tool.status = "running".into(); tool.result = Some(bounded_value(&event["partialResult"])); tool.seq = snapshot.seq; }
+        }
+        "tool_execution_end" => {
+            let status = if event["isError"] == true { "failed" } else if event["result"]["details"]["reason"] == "aborted" { "cancelled" } else { "succeeded" };
+            if let Some(tool) = snapshot.tools.iter_mut().find(|tool| tool.id == id) { tool.status = status.into(); tool.result = Some(bounded_value(&event["result"])); tool.seq = snapshot.seq; }
+            else if snapshot.tools.len() < 64 { snapshot.tools.push(ToolActivity { id: id.into(), name: event["toolName"].as_str().unwrap_or("工具").into(), status: status.into(), args: Value::Null, result: Some(bounded_value(&event["result"])), seq: snapshot.seq }); }
+            else { snapshot.truncated = true; }
+        }
+        _ => {}
+    }
 }
 impl TaskSnapshot {
     fn event(&mut self, typ: &str, payload: Value) -> HostEvent {
@@ -235,6 +320,8 @@ impl TaskManager {
             },
             error: None,
             pending_ui: Vec::new(),
+            tools: Vec::new(),
+            usage: UsageSummary::default(),
         }));
         map.insert(
             id.clone(),
@@ -276,7 +363,7 @@ impl TaskManager {
         Ok(())
     }
     pub async fn query(&self, id: &str, typ: &'static str, payload: Value) -> Result<Value> {
-        if !matches!(typ, "get_state" | "get_messages_page" | "set_model") {
+        if !matches!(typ, "get_state" | "get_messages_page" | "set_model" | "get_session_stats") {
             return Err(HostError::new("forbidden_command", typ));
         }
         let (reply, done) = oneshot::channel();
@@ -696,6 +783,9 @@ async fn run(
     {
         let mut s = snapshot.write().await;
         s.runtime = info;
+        if let Some(state) = s.runtime.capabilities.get("state").cloned() {
+            update_usage(&mut s, "get_state", &state);
+        }
         let event = s.event("process_started", json!({"pid":wire.child.id()}));
         broker.publish(event);
         let event = s.status("ready");
@@ -757,7 +847,7 @@ async fn run(
                     let id=v["id"].as_str().unwrap_or_default();
                     if let Some((command,_,reply))=queries.remove(id) {
                         let result=if v["command"]!=command {Err(HostError::new("protocol_error","Query command mismatch"))}else if v["success"]==true {Ok(v["data"].clone())}else{Err(HostError::new(v["code"].as_str().unwrap_or("request_failed"),v["error"].as_str().unwrap_or("Query failed")))};
-                        if command=="get_state" {if let Ok(state)=&result {let mut s=snapshot.write().await;s.runtime.capabilities["state"]=state.clone();}}
+                        if let Ok(data)=&result {let mut s=snapshot.write().await;if command=="get_state" {s.runtime.capabilities["state"]=data.clone();} update_usage(&mut s,command,data);}
                         let _=reply.send(result);continue;
                     }
                     if let Some(p)=pending.get_mut(id) {
@@ -791,7 +881,10 @@ async fn run(
                         s.pending_ui.push(v.clone());
                     }
                 }
-                let event=snapshot.write().await.event(typ,v.clone());broker.publish(event);
+                let mut s=snapshot.write().await;
+                let event=s.event(typ,v.clone());
+                update_tool(&mut s,typ,&v);
+                broker.publish(event);
             },
             _=tick.tick()=>{
                 let expired:Vec<_>=queries.iter().filter(|(_,(_,deadline,_))|*deadline<=Instant::now()).map(|(id,_)|id.clone()).collect();
@@ -839,6 +932,9 @@ fn valid_ui_response(request: &Value, payload: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn snapshot() -> TaskSnapshot {
+        TaskSnapshot { task_id: "task".into(), run_id: "run".into(), seq: 0, status: "idle".into(), events: VecDeque::new(), text: String::new(), truncated: false, runtime: RuntimeInfo { executable: String::new(), version: None, status: "idle".into(), protocol: Some(2), capabilities: Value::Null, error: None }, error: None, pending_ui: Vec::new(), tools: Vec::new(), usage: UsageSummary::default() }
+    }
     #[test]
     fn ui_responses_validate_method_and_choice() {
         let confirm = json!({"method":"confirm"});
@@ -858,5 +954,17 @@ mod tests {
                 &json!({"value":null})
             ));
         }
+    }
+    #[test]
+    fn tool_activity_and_usage_keep_omp_semantics() {
+        let mut state = snapshot();
+        let start = json!({"toolCallId":"call","toolName":"read","args":{"path":"a"}});
+        state.event("tool_execution_start", start.clone()); update_tool(&mut state, "tool_execution_start", &start);
+        let end = json!({"toolCallId":"call","toolName":"read","result":{"content":[{"type":"text","text":"ok"}]},"isError":false});
+        state.event("tool_execution_end", end.clone()); update_tool(&mut state, "tool_execution_end", &end);
+        update_usage(&mut state, "get_state", &json!({"contextUsage":{"tokens":120,"contextWindow":200,"percent":60.0}}));
+        update_usage(&mut state, "get_session_stats", &json!({"tokens":{"input":10,"output":20,"reasoning":3,"cacheRead":4,"cacheWrite":5,"total":42},"cost":0.12}));
+        assert_eq!(state.tools[0].status, "succeeded"); assert_eq!(state.tools[0].args["path"], "a");
+        assert_eq!(state.usage.context_tokens, Some(120)); assert_eq!(state.usage.total_tokens, Some(42)); assert_eq!(state.usage.cost, Some(0.12));
     }
 }

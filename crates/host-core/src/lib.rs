@@ -1,4 +1,5 @@
 pub mod broker;
+pub mod git;
 pub mod model_config;
 mod runtime;
 pub mod session;

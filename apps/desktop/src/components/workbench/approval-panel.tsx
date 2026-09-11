@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShieldQuestion } from 'lucide-react';
+import { CircleHelp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,7 +16,8 @@ function Approval({ request, busy, onRespond }: { request: PendingUiRequest } & 
   const confirmation = request.method === 'confirm';
   const selection = request.method === 'select';
   return <fieldset disabled={busy} className="min-w-0 border-l-2 border-primary px-4 py-2">
-    <legend className="flex items-center gap-2 text-sm font-medium"><ShieldQuestion size={16} />{request.title || (confirmation ? '需要你的确认' : '需要你的输入')}</legend>
+    <legend className="flex items-center gap-2 text-sm font-medium"><CircleHelp size={16} />{request.title || (confirmation ? 'OMP 扩展请求确认' : 'OMP 扩展请求')}</legend>
+    <p className="mt-1 text-xs text-muted-foreground">此请求由 OMP 扩展明确发起，不代表客户端对命令或文件的安全审批。</p>
     {request.message && <p className="my-2 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{request.message}</p>}
     {!confirmation && <div className="my-3">
       <label className="mb-1.5 block text-xs text-muted-foreground" htmlFor={`approval-${request.id}`}>{selection ? '选择选项' : '回复内容'}</label>

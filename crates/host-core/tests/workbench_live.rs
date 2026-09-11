@@ -48,6 +48,10 @@ async fn database_reopen_preserves_task_and_session() {
   idle(&w,&other.id).await;
   let proof=w.runtime.snapshot(&other.id).await.unwrap();
   assert!(proof.text.contains(&root_marker)&&proof.text.contains(&extra_marker),"Workspace tool read failed: {}",proof.text);
+  assert!(proof.tools.iter().any(|tool| tool.status=="succeeded"),"OMP did not emit a completed tool activity: {:?}",proof.tools);
+  let usage=w.refresh_usage(&other.id).await.unwrap().usage;
+  assert!(usage.context_tokens.is_some(),"OMP did not report context usage: {:?}",usage);
+  assert!(usage.total_tokens.is_some()||usage.input_tokens.is_some()||usage.output_tokens.is_some(),"OMP did not report cumulative session usage: {:?}",usage);
   let original_model=w.runtime.query(&task.id,"get_state",json!({})).await.unwrap()["model"].clone();
   assert!(w.select_model(&task.id,"not-configured","not-a-model").await.is_err());
   assert_eq!(w.runtime.query(&task.id,"get_state",json!({})).await.unwrap()["model"],original_model);

@@ -40,6 +40,10 @@ export function useWorkbench(){
  const turn=run?.events.filter(e=>e.eventType==='user_message').at(-1)?.seq??0;
  useEffect(()=>{if(!run)return;if(run.status==='running'){feed.current.invalidate();setHistoryBusy(false);}else if(['ready','idle','interrupted'].includes(run.status)){void history();}},[taskId,runId,run?.status,turn]);
  const setDraft=(id:string,value:string)=>setDrafts(old=>({...old,[id]:value}));
+ const refreshUsage=async(id:string)=>{
+  try { const snapshot=await records.usage(id); if(active.current&&selection.current===id)setRuns(old=>old.map(run=>run.taskId===id&&run.runId===snapshot.runId?snapshot:run)); }
+  catch(e){if(active.current&&selection.current===id)setError(hostError(e));}
+ };
  const send=async(id:string)=>{const text=drafts[id]??'';if(!text.trim())return;await act(async()=>{await host.prompt(id,text);setDrafts(old=>old[id]===text?{...old,[id]:''}:old);});};
- return{projects:ps,tasks,runs,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,history,historyBusy,historyError,messages:feed.current.messages,cursor:feed.current.cursor,drafts,setDraft,send};
+ return{projects:ps,tasks,runs,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:feed.current.messages,cursor:feed.current.cursor,drafts,setDraft,send};
 }

@@ -3,8 +3,13 @@ export interface HostError{code:string;message:string;suggestion?:string}
 export interface RuntimeInfo{status:RuntimeStatus;executable?:string|null;version?:string|null;protocol?:number|null;capabilities?:unknown;detail?:string|null;error?:HostError|null}
 export type TaskStatus='starting'|'ready'|'running'|'idle'|'failed'|'interrupted'|'stopped';
 export interface HostEvent{taskId:string;runId:string;seq:number;eventType:string;payload:unknown}
+export interface ToolActivity{id:string;name:string;status:'running'|'succeeded'|'failed'|'cancelled'|string;args:unknown;result?:unknown;seq:number}
+export interface UsageSummary{contextTokens?:number;contextWindow?:number;contextPercent?:number;inputTokens?:number;outputTokens?:number;reasoningTokens?:number;cacheReadTokens?:number;cacheWriteTokens?:number;totalTokens?:number;cost?:number}
 export interface PendingUiRequest{id:string;method:'confirm'|'select'|'input'|'editor';title?:string;message?:string;options?:string[]}
-export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[]}
+export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[];tools?:ToolActivity[];usage?:UsageSummary}
+export interface GitChange{path:string;originalPath?:string|null;indexStatus:string;worktreeStatus:string;kind:'modified'|'renamed'|'untracked'|'deleted'|'conflicted'|string}
+export interface GitStatus{rootIndex:number;available:boolean;branch?:string|null;changes:GitChange[]}
+export interface GitDiff{rootIndex:number;path:string;staged:boolean;text:string;binary:boolean}
 export interface ObserverInfo{url:string;token:string}
 export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
 export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}

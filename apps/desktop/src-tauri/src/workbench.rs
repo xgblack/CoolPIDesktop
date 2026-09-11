@@ -227,6 +227,18 @@ async fn task_history(
     w.history(&task_id, cursor).await
 }
 #[tauri::command]
+async fn task_usage(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
+    w.refresh_usage(&task_id).await
+}
+#[tauri::command]
+async fn task_git_status(w: State<'_, Workbench>, task_id: String, root_index: usize) -> Result<host_core::git::GitStatus> {
+    w.git_status(&task_id, root_index).await
+}
+#[tauri::command]
+async fn task_git_diff(w: State<'_, Workbench>, task_id: String, root_index: usize, path: String, staged: bool, untracked: bool) -> Result<host_core::git::GitDiff> {
+    w.git_diff(&task_id, root_index, &path, staged, untracked).await
+}
+#[tauri::command]
 async fn select_task_model(
     w: State<'_, Workbench>,
     task_id: String,
@@ -327,6 +339,9 @@ pub fn run() {
             abort_task,
             respond_ui,
             task_history,
+            task_usage,
+            task_git_status,
+            task_git_diff,
             recover_session,
             select_task_model,
             observer_info

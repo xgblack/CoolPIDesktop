@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {Group,Panel,Separator} from 'react-resizable-panels';
-import {FolderOpen,Menu,Plus} from 'lucide-react';
+import {FolderOpen,Menu,PanelRight,Plus} from 'lucide-react';
 import {host,hostError,projects,records} from './host';
 import type {TaskRecord} from '../../../packages/host-contract/src';
 import {Button} from '@/components/ui/button';
@@ -13,13 +13,14 @@ import {TaskHeader,type Capabilities} from '@/components/workbench/task-header';
 import {MessageList} from '@/components/workbench/message-list';
 import {Composer} from '@/components/workbench/composer';
 import {ApprovalPanel} from '@/components/workbench/approval-panel';
+import {WorkbenchInspector} from '@/components/workbench/workbench-inspector';
 import {NameDialog,RuntimeSettings,RecoveryDialog} from '@/components/workbench/workbench-dialogs';
 import {ErrorNotice,IconButton} from '@/components/workbench/shared';
 import './style.css';
 
 export function App(){
  const w=useWorkbench(),theme=useTheme();
- const [archived,setArchived]=useState(false),[sidebar,setSidebar]=useState(true),[drawer,setDrawer]=useState(false);
+ const [archived,setArchived]=useState(false),[sidebar,setSidebar]=useState(true),[drawer,setDrawer]=useState(false),[details,setDetails]=useState(false);
  const [narrow,setNarrow]=useState(()=>matchMedia('(max-width: 899px)').matches);
  const [settings,setSettings]=useState(false),[recovery,setRecovery]=useState<'task'|'project'|null>(null);
  const [dialog,setDialog]=useState<{kind:'project'|'task'|'rename';initial:string;task?:TaskRecord;project?:boolean}|null>(null);
@@ -37,19 +38,22 @@ export function App(){
   onRenameProject={()=>openName({kind:'rename',initial:w.project?.name??'',project:true})} onArchiveProject={()=>{if(w.project)void w.act(()=>projects.update(w.project!.id,w.project!.name,!w.project!.archived));}}
   onRenameTask={t=>openName({kind:'rename',initial:t.title,task:t})} onUpdateTask={t=>void w.act(()=>records.update(t))}
   onSettings={()=>{remember();setSettings(true);}} onClose={()=>narrow?setDrawer(false):setSidebar(false)} onPaths={()=>{remember();setRecovery('project');}}/>;
+ const inspector=task?<WorkbenchInspector task={task} run={run} busy={w.busy} onRefreshUsage={()=>void w.refreshUsage(task.id)}/>:null;
  const content=<main ref={main} tabIndex={-1} className="conversation">
   {task?<TaskHeader task={task} run={run} busy={w.busy} sidebarVisible={!narrow&&sidebar} onSidebar={()=>narrow?setDrawer(true):setSidebar(true)} onContinue={()=>void w.act(()=>records.resume(task.id))} onStop={()=>void w.act(()=>host.stop(task.id))} onRestart={()=>void w.act(()=>host.restart(task.id))} onAbort={()=>void w.act(()=>host.abort(task.id))} onModel={(p,id)=>void w.act(()=>records.model(task.id,p,id))} onRecovery={()=>{remember();setRecovery('task');}}/>:<header className="task-header"><div className="task-header-title">{(narrow||!sidebar)&&<IconButton label="打开侧栏" onClick={()=>narrow?setDrawer(true):setSidebar(true)}><Menu/></IconButton>}<h1>项目工作台</h1></div></header>}
   <div className="notice-stack">{(w.error?.code==='model_required'||run?.error?.code==='model_required')&&<Button variant="outline" onClick={()=>{remember();setSettings(true);}}>配置模型</Button>}<ErrorNotice error={w.error}/><ErrorNotice error={run?.error}/><ErrorNotice error={w.historyError}/>
    {w.historyError&&ready&&<Button variant="outline" size="sm" disabled={w.historyBusy} onClick={()=>void w.history()}>重新加载历史</Button>}
    {task&&!run&&<p>加载会话将启动 OMP，并可能迁移会话格式。不会自动重发消息或旧审批。{task.lastRun?.errorCode&&' 上次运行：'+task.lastRun.errorCode}</p>}
   </div>
+  {narrow&&task&&<div className="px-4 py-2 sm:px-8"><Button variant="outline" size="sm" onClick={()=>setDetails(true)}><PanelRight size={15}/>工具、用量与变更</Button></div>}
   {task?<><MessageList taskKey={key} messages={w.messages} streamingText={running?run?.text??'':''} running={running} hasMore={!!w.cursor} loading={w.historyBusy} onMore={()=>{if(ready)void w.history(true);}} onRefresh={()=>{if(ready)void w.history();}} onError={e=>w.setError(hostError(e))}/>
    <ApprovalPanel key={key} requests={run?.pendingUi??[]} busy={w.busy} onRespond={(id,value,confirmed,cancelled)=>void w.act(()=>host.respond(task.id,id,value,confirmed,cancelled))}/>
    <Composer key={key} taskId={task.id} draft={w.drafts[task.id]??''} onDraft={v=>w.setDraft(task.id,v)} onSend={()=>void w.send(task.id)} onAbort={()=>void w.act(()=>host.abort(task.id))} canSend={ready&&!!capabilities?.state?.model&&!task.archived} running={running} busy={w.busy} disabledReason={task.archived?'任务已归档，请先恢复任务。':!ready&&!running?'点击“继续”加载会话后发送。':!capabilities?.state?.model?'没有可用模型，请打开设置中的模型配置，再加载会话。':undefined}/>
   </>:<div className="workspace-empty"><FolderOpen size={32}/><h2>{w.project?'选择任务，继续工作':'让每段对话都有自己的工作空间'}</h2><p>{w.project?'从侧栏选择历史任务，或创建一段独立对话。':'添加本机项目目录，再创建任务。OMP 只在你继续任务时启动。'}</p><Button disabled={w.busy||w.project?.archived} onClick={()=>openName({kind:w.project?'task':'project',initial:''})}><Plus/>{w.project?'创建任务':'添加项目'}</Button></div>}
  </main>;
- return <TooltipProvider><div className="workbench">{narrow?content:<Group orientation="horizontal">{sidebar&&<><Panel id="sidebar" defaultSize={260} minSize={220} maxSize={360}>{side}</Panel><Separator className="panel-separator"/></>}<Panel id="conversation" minSize={320}>{content}</Panel></Group>}</div>
+ return <TooltipProvider><div className="workbench">{narrow?content:<Group orientation="horizontal">{sidebar&&<><Panel id="sidebar" defaultSize={260} minSize={220} maxSize={360}>{side}</Panel><Separator className="panel-separator"/></>}<Panel id="conversation" minSize={320}>{content}</Panel>{inspector&&<><Separator className="panel-separator"/><Panel id="inspector" defaultSize={350} minSize={280} maxSize={520}>{inspector}</Panel></>}</Group>}</div>
   {narrow&&<Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" showCloseButton={false} className="w-[min(320px,90vw)] gap-0 p-0"><SheetTitle className="sr-only">项目与任务</SheetTitle><SheetDescription className="sr-only">选择项目和任务</SheetDescription>{side}</SheetContent></Sheet>}
+  {narrow&&inspector&&<Sheet open={details} onOpenChange={setDetails}><SheetContent side="right" className="w-[min(420px,94vw)] overflow-y-auto p-0 pt-8"><SheetTitle className="sr-only">工具、用量与 Git 变更</SheetTitle><SheetDescription className="sr-only">当前任务的工具执行、上下文用量和只读 Git 变更</SheetDescription>{inspector}</SheetContent></Sheet>}
   {dialog&&<NameDialog {...dialog} onClose={()=>setDialog(null)} restoreFocus={restore} onSubmit={async(name,trusted)=>{if(dialog.kind==='project'){const p=await projects.register(name,trusted);if(!p)return;await w.refresh();w.chooseProject(p.id);}else if(dialog.kind==='task'){const t=await records.create(w.projectId,name);await w.refresh();w.chooseTask(t);setDrawer(false);}else if(dialog.task){await records.update({...dialog.task,title:name});await w.refresh();}else if(dialog.project&&w.project){await projects.update(w.project.id,name,w.project.archived);await w.refresh();}}}/>}
   <RuntimeSettings onSaved={w.refresh} open={settings} onClose={()=>setSettings(false)} theme={theme.theme} onTheme={theme.change} themeError={theme.error} restoreFocus={restore}/>
   {recovery&&<RecoveryDialog task={recovery==='task'?task:undefined} roots={(recovery==='task'?task?.roots:w.project?.roots)??[]} onClose={()=>setRecovery(null)} onChanged={w.refresh} restoreFocus={restore}/>}
