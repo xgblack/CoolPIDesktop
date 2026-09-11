@@ -281,8 +281,8 @@ impl Workbench {
         self.store.tasks().await
     }
     async fn stop_locked(&self, id: &str) -> Result<TaskSnapshot> {
+        self.terminals.close_task(id).await?;
         self.runtime.stop(id).await?;
-        self.terminals.close_task(id).await;
         let snapshot = self.runtime.snapshot(id).await?;
         self.store
             .end_run(
@@ -537,7 +537,9 @@ impl Workbench {
                 error = Some(e);
             }
         }
-        self.terminals.close_all().await;
+        if let Err(e) = self.terminals.close_all().await {
+            error = Some(e);
+        }
         error.map_or(Ok(()), Err)
     }
 }

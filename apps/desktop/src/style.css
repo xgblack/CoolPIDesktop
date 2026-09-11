@@ -31,6 +31,7 @@
  pre{tab-size:2}
 }
 .workbench{height:100dvh;min-height:0}
+.terminal-canvas{height:260px;width:100%;min-width:0;overflow:hidden;background:#17191c;padding:4px}.terminal-canvas .xterm{height:100%}
 .workbench>[data-group]{height:100%}
 .conversation{display:flex;flex-direction:column;height:100%;min-width:0;min-height:0;background:var(--background);outline:none}
 .project-sidebar{height:100%;display:flex;flex-direction:column;min-width:0;background:var(--sidebar)}

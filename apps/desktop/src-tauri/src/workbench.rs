@@ -265,8 +265,9 @@ async fn terminal_snapshot(
     w: State<'_, Workbench>,
     task_id: String,
     terminal_id: String,
+    after: u64,
 ) -> Result<host_core::terminal::TerminalSnapshot> {
-    w.terminal_snapshot(&task_id, &terminal_id).await
+    w.terminal_snapshot(&task_id, &terminal_id, after).await
 }
 #[tauri::command]
 async fn terminal_write(
