@@ -143,3 +143,183 @@ async fn cleanup_refuses_dirty_worktree_and_preserves_resources() {
         "ready"
     );
 }
+
+fn git_output(root: &Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+#[tokio::test]
+async fn clean_worktree_cleanup_removes_registration_preserves_branch_and_is_idempotent() {
+    let root = repo();
+    let data = root.join("data");
+    let w = Workbench::open(data.clone()).await.unwrap();
+    let project = w
+        .store
+        .register_project("P", vec![root.join("one"), root.join("two")], true)
+        .await
+        .unwrap();
+    let task = w
+        .create_task(&project.id, "clean", "isolated")
+        .await
+        .unwrap();
+    let other = w
+        .create_task(&project.id, "other", "isolated")
+        .await
+        .unwrap();
+    let mapped = w.task_roots(&task.id).await.unwrap();
+    let path = mapped[0].worktree_path.as_ref().unwrap();
+    let branch = mapped[0].branch.as_ref().unwrap();
+    assert_eq!(mapped[1].worktree_path.as_ref(), Some(path));
+    let source_head = git_output(&root, &["rev-parse", "HEAD"]);
+    let source_status = git_output(&root, &["status", "--porcelain", "-z"]);
+    // List the exact, test-owned clean files before exercising the real Trash API.
+    assert_eq!(
+        git_output(path, &["ls-files"]),
+        b"one/base.txt\ntwo/base.txt\n"
+    );
+    assert_eq!(
+        git_output(path, &["status", "--porcelain", "--ignored"]),
+        b""
+    );
+    let cleaned = w.cleanup_worktrees(&task.id).await.unwrap();
+    assert_eq!(cleaned.len(), 2);
+    assert!(cleaned.iter().all(|r| r.status == "trashed"));
+    assert!(!path.exists());
+    let registration = format!("worktree {}", path.display());
+    let listing = git_output(&root, &["worktree", "list", "--porcelain", "-z"]);
+    assert!(
+        !listing
+            .split(|b| *b == 0)
+            .any(|f| f == registration.as_bytes())
+    );
+    assert_eq!(git_output(&root, &["rev-parse", branch]), source_head);
+    assert_eq!(git_output(&root, &["rev-parse", "HEAD"]), source_head);
+    assert_eq!(
+        git_output(&root, &["status", "--porcelain", "-z"]),
+        source_status
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("one/base.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(w.store.validate_task_roots(&other.id).await.is_ok());
+    assert!(
+        w.cleanup_worktrees(&task.id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.status == "trashed")
+    );
+    drop(w);
+    let reopened = Workbench::open(data).await.unwrap();
+    assert!(
+        reopened
+            .task_roots(&task.id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.status == "trashed")
+    );
+    assert_eq!(
+        reopened
+            .store
+            .validate_task_roots(&task.id)
+            .await
+            .unwrap_err()
+            .code,
+        "worktree_missing"
+    );
+    assert!(reopened.store.validate_task_roots(&other.id).await.is_ok());
+}
+
+#[tokio::test]
+async fn second_repository_failure_reclaims_only_worktrees_created_by_this_attempt() {
+    let first = repo();
+    let second = repo();
+    let data = first.join("data");
+    let w = Workbench::open(data.clone()).await.unwrap();
+    let project = w
+        .store
+        .register_project("P", vec![first.join("one"), second.join("two")], true)
+        .await
+        .unwrap();
+    let other = w
+        .create_task(&project.id, "other", "isolated")
+        .await
+        .unwrap();
+    let other_roots = w.task_roots(&other.id).await.unwrap();
+    std::fs::write(
+        other_roots[0].execution_path.join("keep.txt"),
+        "other task\n",
+    )
+    .unwrap();
+    let task = w
+        .create_task(&project.id, "failing", "shared")
+        .await
+        .unwrap();
+    // A real Git branch conflict occurs only after repository zero was created.
+    let conflict = format!("cool-pi/{}-1", task.id);
+    git(&second, &["branch", &conflict]);
+    let first_listing = git_output(&first, &["worktree", "list", "--porcelain", "-z"]);
+    let second_listing = git_output(&second, &["worktree", "list", "--porcelain", "-z"]);
+    let first_head = git_output(&first, &["rev-parse", "HEAD"]);
+    let second_head = git_output(&second, &["rev-parse", "HEAD"]);
+    let error = w.isolate_task(&task.id).await.unwrap_err();
+    assert_eq!(error.code, "worktree_create_failed");
+    assert!(error.message.contains(&task.id));
+    let mapped = w.task_roots(&task.id).await.unwrap();
+    assert_eq!(mapped.len(), 2);
+    assert_eq!(mapped[0].status, "trashed");
+    assert_eq!(mapped[1].status, "failed");
+    assert!(
+        mapped
+            .iter()
+            .all(|r| !r.worktree_path.as_ref().unwrap().exists())
+    );
+    // The first branch proves creation reached Git; cleanup retains commits/branches.
+    assert_eq!(
+        git_output(&first, &["rev-parse", mapped[0].branch.as_ref().unwrap()]),
+        first_head
+    );
+    assert_eq!(git_output(&second, &["rev-parse", &conflict]), second_head);
+    assert_eq!(
+        git_output(&first, &["worktree", "list", "--porcelain", "-z"]),
+        first_listing
+    );
+    assert_eq!(
+        git_output(&second, &["worktree", "list", "--porcelain", "-z"]),
+        second_listing
+    );
+    assert_eq!(git_output(&first, &["rev-parse", "HEAD"]), first_head);
+    assert_eq!(git_output(&second, &["rev-parse", "HEAD"]), second_head);
+    assert_eq!(
+        std::fs::read_to_string(other_roots[0].execution_path.join("keep.txt")).unwrap(),
+        "other task\n"
+    );
+    assert!(w.store.validate_task_roots(&other.id).await.is_ok());
+    drop(w);
+    let reopened = Workbench::open(data).await.unwrap();
+    let persisted = reopened.task_roots(&task.id).await.unwrap();
+    assert_eq!(persisted[0].status, "trashed");
+    assert_eq!(persisted[1].status, "failed");
+    assert_eq!(
+        reopened
+            .store
+            .validate_task_roots(&task.id)
+            .await
+            .unwrap_err()
+            .code,
+        "worktree_missing"
+    );
+    assert!(reopened.store.validate_task_roots(&other.id).await.is_ok());
+}
