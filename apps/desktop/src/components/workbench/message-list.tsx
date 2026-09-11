@@ -55,7 +55,7 @@ function Markdown({ text, onError }: { text: string; onError: MessageListProps['
       pre: ({ children }) => <CodeBlock onError={onError}>{children}</CodeBlock>,
       a: ({ href, children }) => {
         const url = href && safeUrl(href);
-        return url ? <a className="text-primary underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring" href={url}
+        return url ? <a className="message-link focus-visible:outline-2 focus-visible:outline-ring" href={url}
           onClick={event => { event.preventDefault(); void invoke('open_external_link', { url }).catch(onError); }}
           onAuxClick={event => { event.preventDefault(); if (event.button === 1) void invoke('open_external_link', { url }).catch(onError); }}
           onContextMenu={event => event.preventDefault()}>{children}</a> : <span>{children}</span>;
@@ -114,8 +114,8 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
   return <div className="relative min-h-0 flex-1">
     <div ref={viewport} role="region" aria-label="对话消息" tabIndex={0} className="h-full overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring"
       onScroll={() => { const e = viewport.current; if (!e) return; bottom.current = e.scrollHeight - e.scrollTop - e.clientHeight < 48; setAtBottom(bottom.current); }}>
-      <div className="mx-auto max-w-[880px] px-4 py-5 sm:px-8">
-        <div className="mb-4 flex items-center justify-center gap-2">
+      <div className="message-column">
+        <div className="conversation-search">
           <label className="flex min-w-0 items-center gap-1 rounded border border-border px-2 text-xs"><Search size={13}/><span className="sr-only">搜索当前会话</span><input aria-label="搜索当前会话" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索会话" className="w-32 bg-transparent py-1 outline-none"/></label>
           {hasMore && <Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button>}
           {messages.length > 0 && <Button variant="ghost" size="sm" disabled={loading || running} onClick={onRefresh}><RefreshCw size={14} />刷新历史</Button>}
@@ -124,9 +124,9 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
         {!loading && messages.length === 0 && !streamingText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
         {visibleMessages.map((message, index) => {
           const tool = message.role === 'toolResult' || message.role === 'tool';
-          return <article key={`${index}:${message.timestamp ?? ''}:${message.role}:${message.toolCallId ?? ''}`} className={`min-w-0 py-4 ${tool ? 'border-l-2 border-border pl-3' : ''}`}>
+          return <article key={`${index}:${message.timestamp ?? ''}:${message.role}:${message.toolCallId ?? ''}`} className={`message-row message-${message.role} ${tool?'message-tool':''}`}>
             <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">{tool && <Terminal size={14} />}{message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : tool ? '工具结果' : message.role}</div>
-            <MessageContent message={message} onError={onError} />
+            {tool?<details className="tool-result-disclosure"><summary>查看工具输出</summary><MessageContent message={message} onError={onError}/></details>:<div className={message.role==='user'?'user-bubble':'assistant-body'}><MessageContent message={message} onError={onError}/></div>}
           </article>;
         })}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}

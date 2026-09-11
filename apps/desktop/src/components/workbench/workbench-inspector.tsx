@@ -1,3 +1,4 @@
+import {Tabs} from 'radix-ui';
 import {useEffect, useRef, useState} from 'react';
 import {Binary, ChevronDown, ChevronRight, GitBranch, RefreshCw, Wrench} from 'lucide-react';
 import {host, hostError, records} from '@/host';
@@ -26,7 +27,7 @@ function ToolRow({tool}: {tool: ToolActivity}) {
   return <article className="tool-row"><button className="tool-summary" onClick={() => setOpen(value => !value)} aria-expanded={open}>{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}<span className={`tool-status tool-${tool.status}`}>{tool.status === 'running' ? '运行中' : tool.status === 'succeeded' ? '完成' : tool.status === 'cancelled' ? '已取消' : '失败'}</span><code>{tool.name}</code></button>{open && <div className="tool-detail"><h3>参数</h3><pre>{display(tool.args)}</pre>{tool.result !== undefined && <><h3>结果</h3><pre>{display(tool.result)}</pre></>}</div>}</article>;
 }
 function Tools({tools}: {tools?: ToolActivity[]}) { return <section className="inspector-section" aria-label="工具执行"><div className="inspector-heading"><div><h2><Wrench size={15}/>工具执行</h2><p>当前运行的 OMP 工具调用</p></div></div>{!tools?.length ? <p className="inspector-empty">本次运行尚未收到工具调用。</p> : <div className="tool-list">{[...tools].reverse().map(tool => <ToolRow key={tool.id} tool={tool}/>)}</div>}</section>; }
-function AgentCapabilities() { return <section className="inspector-section" aria-label="并发能力"><div className="inspector-heading"><div><h2>并发能力</h2><p>任务、终端、附件与审批按任务和运行隔离</p></div></div><p className="inspector-note">当前安装版 OMP 未提供可验证的定向子代理控制接口；相关控制已禁用。可继续并行运行多个独立任务。</p></section>; }
+
 
 function ChangeButton({change, staged, onOpen}: {change: GitChange; staged: boolean; onOpen: (change: GitChange, staged: boolean) => void}) {
   const changed = staged ? change.indexStatus : change.worktreeStatus;
@@ -57,7 +58,7 @@ function Git({task}: {task: TaskRecord}) {
     {error && <ErrorNotice error={error}/>} {loading ? <div className="inspector-skeleton" role="status"><span/><span/><span/></div> : !status ? null : !status.available ? <p className="inspector-empty">所选目录不是 Git 仓库。</p> : <>{status.branch && <p className="git-branch">分支：<code>{status.branch}</code></p>}{!status.changes.length ? <p className="inspector-empty">工作区干净，没有可显示的变更。</p> : <div className="git-list">{status.changes.flatMap(change => [<ChangeButton key={`${change.path}:staged`} change={change} staged onOpen={open}/>, <ChangeButton key={`${change.path}:worktree`} change={change} staged={false} onOpen={open}/>])}</div>}</>}
     {status?.available && <GitWrites key={`${task.id}:${root}`} task={task} root={Number(root)} status={status} onChanged={()=>void load()}/>}
     {diffLoading && <p role="status">正在加载差异…</p>}
-    {diff && <div className="git-diff"><div><strong>{diff.path}</strong>{diff.binary && <span className="binary"><Binary size={13}/>二进制文件</span>}</div>{diff.binary ? <p>Git 将此变更识别为二进制内容，不能在此显示文本 diff。</p> : diff.text ? <pre>{diff.text}</pre> : <p>该视图没有可显示的文本差异。</p>}</div>}
+    {diff && <div className="git-diff"><div><strong>{diff.path}</strong>{diff.binary && <span className="binary"><Binary size={13}/>二进制文件</span>}</div>{diff.binary ? <p>Git 将此变更识别为二进制内容，不能在此显示文本 diff。</p> : diff.text ? <pre className="diff-lines">{diff.text.split('\n').map((line,index)=><span key={index} className={line.startsWith('+')?'diff-add':line.startsWith('-')?'diff-remove':line.startsWith('@@')?'diff-range':undefined}>{line||' '}</span>)}</pre> : <p>该视图没有可显示的文本差异。</p>}</div>}
   </section>;
 }
 
@@ -68,5 +69,11 @@ function ExecutionRoots({task}: {task: TaskRecord}) {
 }
 
 export function WorkbenchInspector({task, run, busy, onRefreshUsage, onAttach, selected}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void; onAttach?: (a:Attachment)=>void; selected?:string[]}) {
-  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><ExecutionRoots task={task}/><AgentCapabilities/><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/><TerminalPanel task={task}/><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/><Tools key={run?.runId} tools={run?.tools}/><Git key={task.id + JSON.stringify(task.roots)} task={task}/></aside></TooltipProvider>;
+  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><Tabs.Root defaultValue="files" className="inspector-tab-root"><Tabs.List aria-label="详情视图" className="inspector-tabs">{[['files','文件'],['git','变更'],['tools','活动'],['terminal','终端'],['usage','用量']].map(([id,label])=><Tabs.Trigger key={id} value={id}>{label}</Tabs.Trigger>)}</Tabs.List>
+    <Tabs.Content value="files"><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/></Tabs.Content>
+    <Tabs.Content value="git"><Git key={task.id + JSON.stringify(task.roots)} task={task}/></Tabs.Content>
+    <Tabs.Content value="tools"><Tools key={run?.runId} tools={run?.tools}/><ExecutionRoots task={task}/></Tabs.Content>
+    <Tabs.Content value="terminal" forceMount hidden={false} className="terminal-tab"><TerminalPanel task={task}/></Tabs.Content>
+    <Tabs.Content value="usage"><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/></Tabs.Content>
+  </Tabs.Root></aside></TooltipProvider>;
 }

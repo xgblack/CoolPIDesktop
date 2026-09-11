@@ -8,7 +8,7 @@ const browser=await chromium.launch({channel:'chrome',headless:true});
 try {
  for(const [width,height] of [[1280,800],[1024,700],[390,844]])for(const theme of ['light','dark']){
   const page=await browser.newPage({viewport:{width,height},colorScheme:theme});
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
+  const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR:',e.message);});page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
   await page.route('**/favicon.ico',route=>route.fulfill({status:204}));
   await page.addInitScript(()=>{
    const project={id:'p',name:'长中文项目 · OMP 工作台界面改造与回归验证',roots:['/Users/developer/workspaces/长路径项目/客户端工作台与模型配置预置上下文目录','/tmp/additional-root'],archived:false,trusted:true};
@@ -20,6 +20,8 @@ try {
    window.__TAURI_INTERNALS__={invoke:async(cmd,args={})=>{window.__calls.push({cmd,args});switch(cmd){
     case 'list_projects':return[project];case 'task_records':return[task('a'),task('b')];case 'list_tasks':return Object.values(runs);
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
+    case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
+    case 'task_roots':return[];case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_attachments':return[];
     case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
     case 'task_git_diff':return{rootIndex:args.rootIndex,path:args.path,staged:false,binary:false,text:'diff --git a/src/workbench.tsx b/src/workbench.tsx\n-old content\n+new content'};
     case 'task_usage':return runs[args.taskId];
@@ -31,7 +33,7 @@ try {
    }}};
   });
   await page.goto(process.env.UI_BASE_URL??'http://127.0.0.1:5173');
-  const openSidebar=async()=>{if(width<900)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();};
+  const openSidebar=async()=>{if(width<1024)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();};
   await openSidebar();
   await page.getByRole('button',{name:'选择项目',exact:true}).click();
   await page.getByRole('menuitem',{name:'长中文项目',exact:false}).click();
@@ -45,26 +47,53 @@ try {
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('任务 B 草稿');
   await openSidebar();await page.getByRole('button',{name:/审查工作台界面：.*就绪/}).click();
   assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'任务 A 草稿 · 不应发送到任务 B');
+  await page.getByRole('button',{name:'引用工作区文件',exact:true}).click();
+  await page.getByRole('button',{name:'workbench.tsx',exact:true}).click();
+  assert.match(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),/主目录: "src\/workbench.tsx"/);
+  if(width>=1024){
+   await page.getByRole('button',{name:'收起侧栏',exact:true}).click();
+   await page.getByRole('button',{name:'展开侧栏',exact:true}).waitFor();
+   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-rail.png'});
+   await page.getByRole('button',{name:'展开侧栏',exact:true}).click();
+  }
   await page.getByRole('region',{name:'对话消息'}).evaluate(e=>{e.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.equal(await page.locator('img').count(),0);
-  await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'.png'});
-  if(width<900)await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'.png'});
+  await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
+  if(width>=1024){
+   await page.getByRole('button',{name:'详情全屏',exact:true}).click();
+   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-fullscreen.png'});
+   await page.getByRole('button',{name:'退出详情全屏',exact:true}).click();
+  }
+  if(width>=1024){
+   await page.getByRole('tab',{name:'终端',exact:true}).click();
+   await page.getByRole('button',{name:'启动终端',exact:true}).click();
+   await page.getByText('运行中',{exact:true}).waitFor();
+   await page.getByRole('button',{name:'关闭详情',exact:true}).click();
+   await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
+   assert.equal(await page.evaluate(()=>window.__calls.filter(x=>x.cmd==='terminal_create').length),1);
+   assert.equal(await page.evaluate(()=>window.__calls.filter(x=>x.cmd==='terminal_close').length),0);
+   await page.getByRole('button',{name:'关闭终端',exact:true}).click();
+  }
+  await page.getByRole('tab',{name:'用量',exact:true}).click();
+  assert.equal(await page.getByText('未知',{exact:true}).count()>0,true);
+  await page.getByRole('tab',{name:'变更',exact:true}).click();
   await page.getByRole('button',{name:'工作区 M src/workbench.tsx'}).click();
   await page.getByText('+new content',{exact:false}).waitFor();
-  await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'-inspector.png'});
-  if(width<900)await page.keyboard.press('Escape');
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-inspector.png'});
+  if(width<1024)await page.keyboard.press('Escape');else await page.getByRole('button',{name:'关闭详情',exact:true}).click();
   await page.getByRole('combobox',{name:'任务模型'}).click();await page.getByRole('option',{name:'test/another-model'}).click();
   await page.getByText('模型切换失败，保留当前实际模型').waitFor();
   assert.match(await page.getByRole('combobox',{name:'任务模型'}).innerText(),/qwen3.7-flash/);
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
   await page.getByRole('button',{name:'外观与运行时',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();
-  await page.screenshot({path:output+'/'+width+'-'+height+'-'+theme+'-settings.png'});
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-settings.png'});
   await page.keyboard.press('Escape');
-  assert.equal(await page.getByRole('dialog').count(),width<900?1:0);
+  assert.equal(await page.getByRole('dialog').count(),width<1024?1:0);
   assert.deepEqual(errors,[]);
   await page.close();
  }
- console.log('UI acceptance: 6 viewport/theme combinations passed; 18 screenshots in '+output);
+ console.log('UI acceptance: 6 viewport/theme combinations passed; screenshots in '+output);
 }finally{await browser.close();}

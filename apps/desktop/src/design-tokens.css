@@ -1,0 +1,27 @@
+:root {
+ color-scheme:light;font-size:14px;--radius:0.5714rem;--secondary-foreground:var(--ui-text-primary);--popover:var(--ui-input-surface);--popover-foreground:var(--ui-text-primary);--destructive:var(--ui-state-error);
+ --ui-bg-base:#fff;--ui-bg-sidebar:#f9fafb;--ui-bg-layer:#f5f6f7;--ui-bg-hover:#eef0f3;
+ --ui-text-primary:#0f1115;--ui-text-secondary:#61666b;--ui-text-caption:#81858c;
+ --ui-border-subtle:#dfe2e6;--ui-brand:#4176e6;--ui-state-error:#c52c3e;
+ --ui-user-bubble:#edf3fe;--ui-input-surface:#fff;
+ --ui-radius-panel:22px;--ui-radius-row:10px;--ui-motion:200ms cubic-bezier(.4,0,.2,1);
+ --ui-shadow-panel:0 0 0 .5px #00000016,0 8px 32px #00000006,0 2px 8px #00000003;
+ --ui-chat-width:800px;
+ --background:var(--ui-bg-base);--foreground:var(--ui-text-primary);--sidebar:var(--ui-bg-sidebar);
+ --card:var(--ui-bg-base);--card-foreground:var(--ui-text-primary);--primary:var(--ui-text-primary);--primary-foreground:#fff;
+ --secondary:var(--ui-bg-layer);--muted:var(--ui-bg-layer);--muted-foreground:var(--ui-text-secondary);
+ --accent:var(--ui-bg-hover);--accent-foreground:var(--ui-text-primary);--border:var(--ui-border-subtle);--input:var(--ui-border-subtle);--ring:var(--ui-brand);
+ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+.dark {
+ color-scheme:dark;
+ --ui-bg-base:#151517;--ui-bg-sidebar:#1b1b1c;--ui-bg-layer:#232324;--ui-bg-hover:#303033;
+ --ui-text-primary:#eceef2;--ui-text-secondary:#a6a9af;--ui-text-caption:#969aa1;--ui-border-subtle:#38383c;
+ --ui-user-bubble:#232f46;--ui-input-surface:#232324;--ui-brand:#86aaff;
+ --ui-shadow-panel:0 0 0 .5px #ffffff22,0 8px 32px #00000020;
+ --background:var(--ui-bg-base);--foreground:var(--ui-text-primary);--sidebar:var(--ui-bg-sidebar);--card:var(--ui-bg-base);--card-foreground:var(--ui-text-primary);
+ --primary:var(--ui-text-primary);--primary-foreground:#151517;--secondary:var(--ui-bg-layer);--secondary-foreground:var(--ui-text-primary);--muted:var(--ui-bg-layer);--muted-foreground:var(--ui-text-secondary);
+ --accent:var(--ui-bg-hover);--accent-foreground:var(--ui-text-primary);--border:var(--ui-border-subtle);--input:var(--ui-border-subtle);--ring:var(--ui-brand);--popover:var(--ui-bg-layer);--popover-foreground:var(--ui-text-primary);
+}
+:root{--ui-state-success:#208048;--ui-state-warning:#a66713;--ui-state-running:var(--ui-brand)}
+.dark{--ui-state-success:#72cf95;--ui-state-warning:#e5ba72;--ui-state-error:#f28b97}

@@ -46,3 +46,15 @@ describe('Composer', () => {
     expect(onAbort).toHaveBeenCalledTimes(1);
   });
 });
+
+it('allows attachment-only sends and routes exact local commands without sending them to OMP',()=>{
+ const onSend=vi.fn(),onFiles=vi.fn(),onDraft=vi.fn();
+ const {rerender}=render(<Composer {...base} draft="" attachmentIds={['file-1']} onSend={onSend}/>);
+ fireEvent.click(screen.getByRole('button',{name:'发送'}));
+ expect(onSend).toHaveBeenCalledTimes(1);
+ rerender(<Composer {...base} draft="/files" onFiles={onFiles} onSend={onSend} onDraft={onDraft}/>);
+ fireEvent.keyDown(screen.getByRole('textbox',{name:'消息'}),{key:'Enter',metaKey:true});
+ expect(onFiles).toHaveBeenCalledTimes(1);
+ expect(onSend).toHaveBeenCalledTimes(1);
+ expect(onDraft).toHaveBeenCalledWith('');
+});
