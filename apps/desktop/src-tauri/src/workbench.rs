@@ -32,6 +32,21 @@ async fn create_local_project(w:State<'_,Workbench>,selections:State<'_,Selected
     Ok(project)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all="camelCase")]
+enum ProjectFolder { Existing(usize), Selected(String) }
+
+#[tauri::command]
+async fn edit_local_project(w:State<'_,Workbench>,selections:State<'_,SelectedFolders>,id:String,name:String,folders:Vec<ProjectFolder>,trusted:bool)->Result<Project>{
+    let project=w.store.projects().await?.into_iter().find(|p|p.id==id).ok_or_else(||HostError::new("project_missing","项目不存在"))?;
+    let paths={let selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
+        folders.iter().map(|folder|match folder {
+            ProjectFolder::Existing(index)=>project.roots.get(*index).cloned().ok_or_else(||HostError::new("invalid_workspace","项目目录已改变，请重新打开编辑窗口")),
+            ProjectFolder::Selected(token)=>selected.get(token).cloned().ok_or_else(||HostError::new("invalid_workspace","请重新选择项目文件夹")),
+        }).collect::<Result<Vec<_>>>()?};
+    w.store.edit_project(&id,&name,paths,trusted).await
+}
+
 fn external_url(value: &str) -> Result<url::Url> {
     let url = url::Url::parse(value).map_err(|_| HostError::new("invalid_url", "链接格式无效"))?;
     if !matches!(url.scheme(), "http" | "https")
@@ -533,6 +548,7 @@ pub fn run() {
             register_project,
             choose_project_folders,
             create_local_project,
+            edit_local_project,
             update_project,
             task_records,
             create_task,

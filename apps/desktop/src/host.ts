@@ -2,7 +2,7 @@ import {invoke} from '@tauri-apps/api/core';import type {HostError,TaskSnapshot,
 import type {Project,TaskRecord,HistoryPage,GitStatus,GitDiff,TaskRoot} from '../../../packages/host-contract/src';
 import type {CommitPreview} from '../../../packages/host-contract/src';
 export interface FileReference {rootIndex:number;path:string;name:string}
-export const localProjects={choose:()=>invoke<{token:string;path:string}[]>('choose_project_folders'),create:(name:string,tokens:string[],trusted:boolean)=>invoke<Project>('create_local_project',{name,tokens,trusted})};
+export const localProjects={edit:(id:string,name:string,folders:({existing:number}|{selected:string})[],trusted:boolean)=>invoke<Project>('edit_local_project',{id,name,folders,trusted}),choose:()=>invoke<{token:string;path:string}[]>('choose_project_folders'),create:(name:string,tokens:string[],trusted:boolean)=>invoke<Project>('create_local_project',{name,tokens,trusted})};
 export const sendPrompt=(taskId:string,message:string,attachmentIds:string[],references:FileReference[])=>invoke<TaskSnapshot>('prompt_task',{taskId,message,attachmentIds,references});
 export const searchFiles=(taskId:string,rootIndex:number,query:string)=>invoke<DirectoryPage>('search_task_files',{taskId,rootIndex,query});
 export const gitWrites={change:(taskId:string,rootIndex:number,path:string,action:'stage'|'unstage'|'discard',confirmed=false)=>invoke<void>('task_git_change',{taskId,rootIndex,path,action,confirmed}),preview:(taskId:string,rootIndex:number)=>invoke<CommitPreview>('task_git_commit_preview',{taskId,rootIndex}),commit:(taskId:string,rootIndex:number,message:string,expected:CommitPreview)=>invoke<string>('task_git_commit',{taskId,rootIndex,message,expected})};

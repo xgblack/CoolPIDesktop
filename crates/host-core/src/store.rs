@@ -287,6 +287,26 @@ impl Store {
         .await
     }
 
+    /// Project defaults affect newly created tasks; existing task roots stay bound.
+    pub async fn edit_project(&self, id: &str, title: &str, roots: Vec<PathBuf>, trusted: bool) -> Result<Project> {
+        let (id, title) = (id.to_owned(), name(title)?);
+        if !trusted { return Err(HostError::new("workspace_untrusted", "请确认目录信任")); }
+        self.access(move |c| {
+            let canonical = workspace::validate_roots(&roots)?;
+            let tx = c.transaction().map_err(db)?;
+            let archived: bool = tx.query_row("SELECT archived FROM projects WHERE id=?1", [&id], |r| r.get(0)).optional().map_err(db)?.ok_or_else(|| HostError::new("project_missing", "Unknown project"))?;
+            tx.execute("DELETE FROM project_roots WHERE project_id=?1", [&id]).map_err(db)?;
+            for (ordinal, root) in canonical.iter().enumerate() {
+                let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM project_roots WHERE path=?1)", [root.to_string_lossy().as_ref()], |r| r.get(0)).map_err(db)?;
+                if exists { return Err(HostError::new("directory_duplicate", "Directory already registered")); }
+                tx.execute("INSERT INTO project_roots VALUES(?1,?2,?3)", params![root.to_string_lossy(), id, ordinal as i64]).map_err(db)?;
+            }
+            tx.execute("UPDATE projects SET name=?2,roots=?3,original_roots=?4,trusted=1 WHERE id=?1", params![id,title,serde_json::to_string(&canonical).map_err(db)?,serde_json::to_string(&roots).map_err(db)?]).map_err(db)?;
+            tx.commit().map_err(db)?;
+            Ok(Project{id,name:title,roots:canonical,archived,trusted:true})
+        }).await
+    }
+
     pub async fn update_project(&self, id: &str, title: &str, archived: bool) -> Result<()> {
         let (id, title) = (id.to_owned(), name(title)?);
         self.access(move |c| {
