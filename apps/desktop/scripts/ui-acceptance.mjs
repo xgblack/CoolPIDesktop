@@ -46,7 +46,8 @@ try {
   await openSidebar();
   await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.__calls.some(x=>x.cmd==='continue_task')),false);
-  await page.getByRole('button',{name:'继续',exact:true}).click();
+
+  await page.locator('.activity-group > summary').first().click();
   await page.getByText('同一项目下，每个任务保留独立的',{exact:false}).waitFor();
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('任务 A 草稿 · 不应发送到任务 B');
   await openSidebar();await page.getByRole('button',{name:'第二个任务 · 草稿和审批隔离',exact:true}).click();
@@ -77,6 +78,8 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.equal(await page.locator('img').count(),0);
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'.png'});
+  await page.locator('.activity-group > summary').first().click();
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-activity.png'});
   await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
   if(width>=1024){
    await page.getByRole('button',{name:'详情全屏',exact:true}).click();

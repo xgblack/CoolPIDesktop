@@ -1,13 +1,15 @@
-import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, memo, type ReactNode } from 'react';
+import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
 import { ArrowDown, Check, Copy, RefreshCw, Terminal, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { Message } from '../../../../../packages/host-contract/src';
+import {ActivityRow,activitySummary} from './activity-row';
+import type { Message, ToolActivity } from '../../../../../packages/host-contract/src';
 
 interface MessageListProps {
   taskKey: string;
+  tools?: ToolActivity[];
   messages: Message[];
   streamingText: string;
   running: boolean;
@@ -66,24 +68,21 @@ const Markdown=memo(function Markdown({ text, onError }: { text: string; onError
   </div>;
 },(a,b)=>a.text===b.text);
 
-const MessageContent=memo(function MessageContent({ message, onError }: { message: Message; onError: MessageListProps['onError'] }) {
+const MessageContent=memo(function MessageContent({ message, results, onError }: { message: Message; results?: Map<string,Message>; onError: MessageListProps['onError'] }) {
   const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content }]
     : Array.isArray(message.content) ? message.content : [{ type: 'unknown', value: message.content }];
   return <>{blocks.map((raw: unknown, index: number) => {
     const block = raw && typeof raw === 'object' ? raw as Record<string, unknown> : { type: 'text', text: String(raw ?? '') };
     if (block.type === 'thinking' || block.type === 'reasoning') {
       const thought = typeof block.thinking === 'string' ? block.thinking : typeof block.text === 'string' ? block.text : '';
-      return <details key={index} className="my-2 text-muted-foreground"><summary className="cursor-pointer rounded py-1 text-xs focus-visible:outline-2 focus-visible:outline-ring">思考过程</summary><Markdown text={thought} onError={onError} /></details>;
+      return <ActivityRow key={index} kind="thinking" preview={activitySummary(thought)}><Markdown text={thought} onError={onError}/></ActivityRow>;
     }
     if (typeof block.text === 'string') return <Markdown key={index} text={block.text} onError={onError} />;
     if (block.type === 'image') return <p key={index} className="my-2 text-xs text-muted-foreground">[图片未加载]</p>;
-    if (block.type === 'toolCall' || block.type === 'tool_use') return <details key={index} className="my-2 border-l-2 border-border pl-3">
-      <summary className="cursor-pointer rounded py-1 text-xs focus-visible:outline-2 focus-visible:outline-ring">工具调用：{String(block.name ?? '工具')}</summary>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(block.arguments ?? block.input ?? {}, null, 2)}</pre>
-    </details>;
+    if (block.type === 'toolCall' || block.type === 'tool_use') {const result=results?.get(String(block.id??''));return <ActivityRow key={index} name={String(block.name??'工具')} state={result?((result as Message & {isError?:boolean}).isError?'failed':'succeeded'):undefined} preview={activitySummary(block.arguments??block.input)}><pre>{JSON.stringify(block.arguments??block.input??{},null,2)}</pre>{result&&<MessageContent message={result} onError={onError}/>}</ActivityRow>;}
     return <pre key={index} className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs text-muted-foreground">{JSON.stringify(block.value ?? block, null, 2)}</pre>;
   })}</>;
-},(a,b)=>a.message===b.message);
+},(a,b)=>a.message===b.message&&a.results===b.results);
 
 function StreamingMarkdown({text,onError}:{text:string;onError:MessageListProps['onError']}){
  const [parsed,setParsed]=useState(text),latest=useRef(text);latest.current=text;
@@ -92,7 +91,7 @@ function StreamingMarkdown({text,onError}:{text:string;onError:MessageListProps[
  return <><Markdown text={prefix} onError={onError}/><span className="streaming-tail">{text.slice(prefix.length)}</span></>;
 }
 
-export function MessageList({ taskKey, messages, streamingText, running, hasMore, loading, onMore, onRefresh, onError }: MessageListProps) {
+export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, onRefresh, onError }: MessageListProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
   const previous = useRef({ taskKey, first: messages[0], height: 0 });
@@ -100,6 +99,27 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
   const [query, setQuery] = useState('');
   const normalized = query.trim().toLowerCase();
   const visibleMessages = normalized ? messages.filter(message => JSON.stringify(message.content).toLowerCase().includes(normalized)) : messages;
+  const results=useMemo(()=>new Map(messages.filter(m=>m.toolCallId).map(m=>[m.toolCallId!,m])),[messages]);
+  const calledIds=useMemo(()=>new Set(messages.flatMap(m=>Array.isArray(m.content)?m.content.filter(b=>b&&['toolCall','tool_use'].includes(b.type)).map(b=>b.id):[])),[messages]);
+  const transcript=useMemo(()=>{
+    const rows:{user?:Message;activity:Message[];answer:Message[]}[]=[];
+    for(const message of visibleMessages){
+      if(message.role==='user'){rows.push({user:message,activity:[],answer:[]});continue;}
+      let row=rows.at(-1);if(!row||row.user){row={activity:[],answer:[]};rows.push(row);}
+      if(message.role!=='assistant'){if(!message.toolCallId||!calledIds.has(message.toolCallId))row.activity.push(message);continue;}
+      const blocks=Array.isArray(message.content)?message.content:[{type:'text',text:message.content}];
+      if(row.answer.length){row.activity.push(...row.answer);row.answer=[];}
+      const process=blocks.filter(b=>b&&['thinking','reasoning','toolCall','tool_use'].includes(b.type));
+      const body=blocks.filter(b=>!b||!['thinking','reasoning','toolCall','tool_use'].includes(b.type));
+      if(process.length)row.activity.push({...message,content:process});
+      if(body.length){
+        // Text preceding another tool step belongs in the expandable process.
+        row.answer.push({...message,content:body});
+      }
+      if(process.some(b=>['toolCall','tool_use'].includes(b.type))){row.activity.push(...row.answer);row.answer=[];}
+    }
+    return rows;
+  },[messages,normalized]);
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -129,16 +149,14 @@ export function MessageList({ taskKey, messages, streamingText, running, hasMore
         </div>
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
         {!loading && messages.length === 0 && !streamingText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
-        {visibleMessages.map((message, index) => {
-          const tool = message.role === 'toolResult' || message.role === 'tool';
-          return <article key={`${index}:${message.timestamp ?? ''}:${message.role}:${message.toolCallId ?? ''}`} className={`message-row message-${message.role} ${tool?'message-tool':''}`}>
-            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">{tool && <Terminal size={14} />}{message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : tool ? '工具结果' : message.role}</div>
-            {tool?<details className="tool-result-disclosure"><summary>查看工具输出</summary><MessageContent message={message} onError={onError}/></details>:<div className={message.role==='user'?'user-bubble':'assistant-body'}><MessageContent message={message} onError={onError}/></div>}
-          </article>;
-        })}
+        {transcript.map((item,index)=>item.user?<article key={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={index} className="assistant-turn">
+          {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>执行过程 · {item.activity.length} 项</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i}>{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><MessageContent message={message} onError={onError}/></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError}/>}</div>)}</div></details>}
+          {item.answer.map((message,i)=><div key={i} className="assistant-body"><MessageContent message={message} onError={onError}/></div>)}
+        </section>)}
+        {running&&tools.length>0&&<div className="live-activities" aria-label="当前工具执行">{tools.map(tool=><ActivityRow key={tool.id} name={tool.name} preview={activitySummary(tool.args)} state={tool.status}><pre>{JSON.stringify({参数:tool.args,结果:tool.result},null,2)}</pre></ActivityRow>)}</div>}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
-        {streamingText && <article className="min-w-0 py-4"><div className="mb-2 text-xs font-medium text-muted-foreground">助手 · {running?'正在生成':'正在同步'}</div><StreamingMarkdown text={streamingText} onError={onError} /></article>}
-        {running && !streamingText && <p role="status" className="py-3 text-xs text-muted-foreground">正在处理…</p>}
+        {streamingText && <article className="min-w-0 py-4"><div className="mb-2 text-xs font-medium text-muted-foreground">{running?'正在回复':'正在同步'}</div><StreamingMarkdown text={streamingText} onError={onError} /></article>}
+        {running && !streamingText && <div role="status" className="activity-wait"><span className="activity-icon"><Terminal size={14}/></span>正在处理…</div>}
       </div>
     </div>
     {!atBottom && <Button className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-sm" size="sm" variant="secondary" onClick={jump}><ArrowDown size={14} />回到底部</Button>}
