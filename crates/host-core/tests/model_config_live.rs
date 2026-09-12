@@ -136,3 +136,68 @@ async fn versioned_catalog_and_idle_task_reload() {
     assert_ne!(before.run_id, after.run_id);
     println!("PASS exact-version catalog cache and idle-task model reload");
 }
+
+#[tokio::test]
+#[ignore = "requires explicit system OMP; discovery and startup only, no prompt"]
+async fn discovered_model_matches_new_task_and_failed_switch_preserves_selection() {
+    let exe = std::path::PathBuf::from(std::env::var("OMP_EXECUTABLE").unwrap());
+    let root = std::env::temp_dir().join(format!("omp-model-selection-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("project")).unwrap();
+    let discovery = model_config::discover(&exe, &root.join("probe"))
+        .await
+        .unwrap();
+    assert!(!discovery.models.is_empty());
+    // Last candidate exercises a selection other than the menu's first item.
+    let model = discovery.models.last().unwrap();
+    let provider = model["provider"].as_str().unwrap().to_owned();
+    let id = model["id"].as_str().unwrap().to_owned();
+    let selected = format!("{provider}/{id}");
+    let w = host_core::Workbench::open(root.join("host")).await.unwrap();
+    w.store
+        .set_setting("executable", exe.to_string_lossy().into())
+        .await
+        .unwrap();
+    let p = w
+        .store
+        .register_project("test", vec![root.join("project")], true)
+        .await
+        .unwrap();
+    let task = w
+        .create_task_with_model(&p.id, "selected", "shared", Some(selected.clone()))
+        .await
+        .unwrap();
+    let worker = w.clone();
+    let scenario = tokio::spawn(async move {
+        let snapshot = worker.continue_task(&task.id).await.unwrap();
+        let actual = &snapshot.runtime.capabilities["state"]["model"];
+        assert_eq!(actual["provider"], provider);
+        assert_eq!(actual["id"], id);
+        assert_eq!(
+            worker.store.task(&task.id).await.unwrap().model.as_deref(),
+            Some(selected.as_str())
+        );
+        assert!(
+            worker
+                .select_model(&task.id, "not-configured", "not-a-model")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            worker.store.task(&task.id).await.unwrap().model.as_deref(),
+            Some(selected.as_str())
+        );
+        let state = worker
+            .runtime
+            .query(&task.id, "get_state", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(state["model"]["provider"], provider);
+        assert_eq!(state["model"]["id"], id);
+    })
+    .await;
+    w.shutdown().await.unwrap();
+    scenario.unwrap();
+    println!(
+        "PASS discovered selection matches first startup; rejected switch retains stored and actual model; no prompt sent"
+    );
+}

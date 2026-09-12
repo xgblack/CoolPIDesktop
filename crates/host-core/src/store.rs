@@ -372,6 +372,14 @@ impl Store {
     }
 
     pub async fn create_task(&self, project_id: &str, title: &str) -> Result<TaskRecord> {
+        self.create_task_with_model(project_id, title, None).await
+    }
+    pub async fn create_task_with_model(
+        &self,
+        project_id: &str,
+        title: &str,
+        model: Option<String>,
+    ) -> Result<TaskRecord> {
         let (project_id, title) = (project_id.to_owned(), name(title)?);
         self.access(move |c| {
             let (roots,original,trusted,archived):(String,String,bool,bool)=c.query_row("SELECT roots,original_roots,trusted,archived FROM projects WHERE id=?1",[&project_id],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(db)?.ok_or_else(|| HostError::new("project_missing","Unknown project"))?;
@@ -379,6 +387,7 @@ impl Store {
             let id=uuid::Uuid::new_v4().to_string();
             let tx = c.transaction().map_err(db)?;
             tx.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",params![id,project_id,title,roots,original,trusted,now()]).map_err(db)?;
+            tx.execute("UPDATE tasks SET model=?2 WHERE id=?1",params![id,model]).map_err(db)?;
             for (index, root) in paths(roots.clone()).map_err(db)?.into_iter().enumerate() {
                 tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
             }

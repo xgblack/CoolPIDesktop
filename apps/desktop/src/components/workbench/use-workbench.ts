@@ -23,10 +23,19 @@ export function useWorkbench(){
  const feed=useRef(new HistoryFeed());
  const refresh=useCallback(async()=>{
   const epoch=generation.current;
-  const configPromise = modelConfig?.load ? modelConfig.load().catch(() => null) : Promise.resolve(null);
-  const [p,t,r,config]=await Promise.all([projects.list(),records.list(),host.list(),configPromise]);
-  if(active.current&&epoch===generation.current){setProjects(p);setTasks(t);setRuns(old=>r.reduce(mergeSnapshot,old));if(config)setModels(config.providers.flatMap(provider=>provider.models.filter(model=>model.id.trim()).map(model=>({id:model.id,provider:provider.id,name:model.name}))));setLoading(false);}
+  const [p,t,r]=await Promise.all([projects.list(),records.list(),host.list()]);
+  if(active.current&&epoch===generation.current){setProjects(p);setTasks(t);setRuns(old=>r.reduce(mergeSnapshot,old));setLoading(false);}
  },[]);
+ const [modelsLoading,setModelsLoading]=useState(true),[modelsError,setModelsError]=useState<HostError|null>(null);
+ const [projectModels,setProjectModels]=useState<Record<string,string>>({});
+ const modelRequest=useRef<Promise<void>|null>(null);
+ const refreshModels=useCallback(()=>{
+  if(modelRequest.current)return modelRequest.current;
+  setModelsLoading(true);setModelsError(null);
+  const request=modelConfig.verify().then(result=>{if(active.current)setModels(result.models);}).catch(e=>{if(active.current)setModelsError(hostError(e));}).finally(()=>{modelRequest.current=null;if(active.current)setModelsLoading(false);});
+  modelRequest.current=request;return request;
+ },[]);
+ useEffect(()=>{void refreshModels();},[refreshModels]);
  useEffect(()=>{active.current=true;let inFlight=false;const poll=async()=>{if(inFlight||operation.current)return;inFlight=true;try{await refresh();}catch(e){if(active.current){setError(hostError(e));setLoading(false);}}finally{inFlight=false;}};void poll();const timer=setInterval(poll,5000);return()=>{active.current=false;feed.current.invalidate();clearInterval(timer);};},[refresh]);
  useEffect(()=>{
   let disposed=false,socket:WebSocket|undefined,retry:ReturnType<typeof setTimeout>,frame=0;
@@ -77,5 +86,5 @@ export function useWorkbench(){
  useEffect(()=>{if(acknowledged)setOutbox(old=>{const next={...old};delete next[taskId];return next;});},[acknowledged,taskId]);
  const addAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:[...new Set([...(old[id]??[]),resource])].slice(0,8)}));
  const removeAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:(old[id]??[]).filter(value=>value!==resource)}));
- return{projects:ps,tasks,runs,models,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,references,setReferences};
+ return{projects:ps,tasks,runs,models,modelsLoading,modelsError,refreshModels,projectModels,setProjectModels,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,references,setReferences};
 }

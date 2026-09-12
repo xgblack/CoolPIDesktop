@@ -171,9 +171,15 @@ async fn create_task(
     project_id: String,
     title: String,
     mode: Option<String>,
+    model: Option<String>,
 ) -> Result<TaskRecord> {
-    w.create_task(&project_id, &title, mode.as_deref().unwrap_or("shared"))
-        .await
+    w.create_task_with_model(
+        &project_id,
+        &title,
+        mode.as_deref().unwrap_or("shared"),
+        model,
+    )
+    .await
 }
 #[tauri::command]
 async fn update_task(

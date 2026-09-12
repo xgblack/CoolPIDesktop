@@ -6,6 +6,8 @@ async fn project_edit_preserves_tasks_and_rolls_back_conflicts() {
  let store=Store::open(root.join("db.sqlite")).await.unwrap();
  let a=root.join("a");let b=root.join("b");let c=root.join("c");
  let p=store.register_project("old",vec![a.clone()],true).await.unwrap();
+ let chosen=store.create_task_with_model(&p.id,"selected",Some("provider/request-id".into())).await.unwrap();
+ assert_eq!(store.task(&chosen.id).await.unwrap().model.as_deref(),Some("provider/request-id"));
  let old=store.create_task(&p.id,"old task").await.unwrap();
  store.register_project("other",vec![c.clone()],true).await.unwrap();
  let edited=store.edit_project(&p.id,"new",vec![b.clone(),a.clone()],true).await.unwrap();

@@ -55,6 +55,9 @@ pub(crate) async fn verify(root: &TaskRoot) -> Result<()> {
 
 impl Workbench {
     pub async fn create_task(&self, project: &str, title: &str, mode: &str) -> Result<TaskRecord> {
+        self.create_task_with_model(project,title,mode,None).await
+    }
+    pub async fn create_task_with_model(&self, project: &str,title: &str,mode: &str,model: Option<String>) -> Result<TaskRecord> {
         if !matches!(mode, "shared" | "isolated") {
             return Err(HostError::new(
                 "invalid_workspace_mode",
@@ -87,7 +90,7 @@ impl Workbench {
                 git::head(&repo).await?;
             }
         }
-        let task = self.store.create_task(project, title).await?;
+        let task = self.store.create_task_with_model(project, title, model).await?;
         if mode == "isolated" {
             self.isolate_locked(&task.id).await?;
         }

@@ -4,7 +4,7 @@ import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {useWorkbench} from './use-workbench';
 import {host,projects,records,sendPrompt} from '../../host';
 import type {TaskRecord,TaskSnapshot} from '../../../../../packages/host-contract/src';
-vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn()},records:{list:vi.fn(),history:vi.fn()},modelConfig:{load:vi.fn().mockResolvedValue({providers:[]})},hostError:(e:unknown)=>e}));
+vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn()},records:{list:vi.fn(),history:vi.fn()},modelConfig:{verify:vi.fn().mockResolvedValue({models:[]}),load:vi.fn().mockResolvedValue({providers:[]})},hostError:(e:unknown)=>e}));
 const task=(id:string):TaskRecord=>({id,projectId:'p',title:id,roots:['/tmp'],pinned:false,archived:false,sessionId:id,sessionFile:id,model:null});
 const a=task('a'),b=task('b');
 const run=(id:string):TaskSnapshot=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[]});
@@ -60,4 +60,34 @@ it('does not publish an old operation error on another task',async()=>{
  act(()=>{operation=result.current.act(()=>pending);});act(()=>result.current.chooseTask(b));
  await act(async()=>{reject({code:'old_error',message:'A failed'});await operation;});
  expect(result.current.error).toBeNull();expect(result.current.taskId).toBe('b');
+});
+
+it('discovers models once across ordinary refreshes and keeps project selections separate',async()=>{
+ const {modelConfig}=await import('../../host');
+ vi.mocked(modelConfig.verify).mockResolvedValue({stage:'loaded',message:'loaded',models:[{provider:'test',id:'request-id',name:'Display'}]});
+ const {result}=renderHook(useWorkbench);
+ await waitFor(()=>expect(result.current.models).toHaveLength(1));
+ act(()=>result.current.setProjectModels({a:'test/request-id',b:'test/other'}));
+ await act(async()=>{await result.current.refresh();await result.current.refresh();});
+ expect(modelConfig.verify).toHaveBeenCalledTimes(1);
+ expect(result.current.projectModels).toEqual({a:'test/request-id',b:'test/other'});
+});
+
+it('reports discovery failure and deduplicates retries without replacing a removed selection',async()=>{
+ const {modelConfig}=await import('../../host');
+ vi.mocked(modelConfig.verify).mockRejectedValueOnce({code:'discovery_failed',message:'retry discovery'});
+ const {result}=renderHook(useWorkbench);
+ await waitFor(()=>expect(result.current.modelsError?.code).toBe('discovery_failed'));
+ expect(result.current.modelsLoading).toBe(false);
+ act(()=>result.current.setProjectModels({p:'test/removed'}));
+ const pending=deferred<{stage:'loaded';message:string;models:{provider:string;id:string}[]}>();
+ vi.mocked(modelConfig.verify).mockReturnValue(pending.promise);
+ let retry!:Promise<void>;
+ act(()=>{retry=result.current.refreshModels();void result.current.refreshModels();});
+ expect(result.current.modelsLoading).toBe(true);
+ expect(modelConfig.verify).toHaveBeenCalledTimes(2);
+ await act(async()=>{pending.resolve({stage:'loaded',message:'loaded',models:[{provider:'test',id:'replacement'}]});await retry;});
+ expect(result.current.modelsError).toBeNull();
+ expect(result.current.modelsLoading).toBe(false);
+ expect(result.current.projectModels.p).toBe('test/removed');
 });

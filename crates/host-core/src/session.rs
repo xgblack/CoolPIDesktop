@@ -202,7 +202,32 @@ impl Workbench {
                     }));
                 }
                 if snapshot.status == "ready" {
-                    let state = self.runtime.query(id, "get_state", json!({})).await?;
+                    let mut state = self.runtime.query(id, "get_state", json!({})).await?;
+                    if let Some(selected) = &task.model {
+                        let (provider, model_id) = selected.split_once('/').ok_or_else(|| {
+                            HostError::new("model_unavailable", "Invalid model selection")
+                        })?;
+                        if state["model"]["provider"] != provider
+                            || state["model"]["id"] != model_id
+                        {
+                            self.runtime
+                                .query(
+                                    id,
+                                    "set_model",
+                                    json!({"provider":provider,"modelId":model_id}),
+                                )
+                                .await?;
+                            state = self.runtime.query(id, "get_state", json!({})).await?;
+                            if state["model"]["provider"] != provider
+                                || state["model"]["id"] != model_id
+                            {
+                                return Err(HostError::new(
+                                    "model_unavailable",
+                                    "OMP did not select the requested model",
+                                ));
+                            }
+                        }
+                    }
                     let session_id = state["sessionId"].as_str().ok_or_else(|| {
                         HostError::new("session_missing", "OMP did not report sessionId")
                     })?;
@@ -246,7 +271,7 @@ impl Workbench {
                                 .map(|(p, m)| format!("{p}/{m}")),
                         )
                         .await?;
-                    return Ok(snapshot);
+                    return self.runtime.snapshot(id).await;
                 }
                 tokio::time::sleep(Duration::from_millis(30)).await;
             }
@@ -465,9 +490,6 @@ impl Workbench {
 
     pub async fn select_model(&self, id: &str, provider: &str, model_id: &str) -> Result<Value> {
         let _guard = self.gate.lock().await;
-        self.store
-            .set_model(id, Some(format!("{provider}/{model_id}")))
-            .await?;
         let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
             matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
         });
@@ -479,8 +501,21 @@ impl Workbench {
                     json!({"provider":provider,"modelId":model_id}),
                 )
                 .await?;
-            return self.runtime.query(id, "get_state", json!({})).await;
+            let state = self.runtime.query(id, "get_state", json!({})).await?;
+            if state["model"]["provider"] != provider || state["model"]["id"] != model_id {
+                return Err(HostError::new(
+                    "model_unavailable",
+                    "OMP model selection mismatch",
+                ));
+            }
+            self.store
+                .set_model(id, Some(format!("{provider}/{model_id}")))
+                .await?;
+            return Ok(state);
         }
+        self.store
+            .set_model(id, Some(format!("{provider}/{model_id}")))
+            .await?;
         Ok(json!({"model":{"provider":provider,"id":model_id}}))
     }
     pub async fn recover_session(&self, id: &str, confirmed: bool) -> Result<String> {
