@@ -22,6 +22,12 @@ use uuid::Uuid;
 
 const EVENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TASKS: usize = 32;
+pub(crate) fn validate_approval_mode(mode: Option<&str>) -> Result<()> {
+    match mode {
+        None | Some("always-ask" | "write" | "yolo") => Ok(()),
+        _ => Err(HostError::new("invalid_approval_mode", "Unknown approval mode")),
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostEvent {
@@ -233,6 +239,7 @@ enum Action {
 }
 #[derive(Clone, Default)]
 pub struct LaunchOptions {
+    pub approval_mode: Option<String>,
     pub run_id: Option<String>,
     pub root: PathBuf,
     pub additional: Vec<PathBuf>,
@@ -523,6 +530,10 @@ impl Wire {
         }
         let mut command = runtime::command(path);
         command.args(["--mode", "rpc"]);
+        if let Some(mode) = &options.approval_mode {
+            validate_approval_mode(Some(mode))?;
+            command.args(["--approval-mode", mode]);
+        }
         command.arg("--cwd").arg(root);
         for path in &options.additional {
             command.arg("--add-dir").arg(path);

@@ -166,6 +166,7 @@ impl Workbench {
         }
         let run_id = uuid::Uuid::new_v4().to_string();
         let options = LaunchOptions {
+            approval_mode: task.approval_mode.clone(),
             run_id: Some(run_id.clone()),
             root: roots[0].clone(),
             additional: roots[1..].to_vec(),
@@ -373,6 +374,51 @@ impl Workbench {
             self.runtime.forget_stopped(id).await?;
         }
         self.continue_locked(id).await
+    }
+    /// Change only this task's OMP process. Workbench terminals remain alive.
+    pub async fn set_approval_mode(&self, id: &str, mode: Option<String>) -> Result<TaskRecord> {
+        crate::task::validate_approval_mode(mode.as_deref())?;
+        let _guard = self.gate.lock().await;
+        let task = self.store.task(id).await?;
+        if task.archived {
+            return Err(HostError::new("task_archived", "Restore task before changing approval mode"));
+        }
+        if task.approval_mode == mode { return Ok(task); }
+        let snapshot = self.runtime.snapshot(id).await.ok();
+        let alive = snapshot.as_ref().is_some_and(|s| !matches!(s.status.as_str(), "stopped" | "failed"));
+        if alive {
+            let snapshot = snapshot.as_ref().unwrap();
+            if !matches!(snapshot.status.as_str(), "ready" | "idle" | "interrupted") || !snapshot.pending_ui.is_empty() {
+                return Err(HostError::new("task_busy", "等待当前生成或审批结束后再切换审批模式"));
+            }
+            let state = self.runtime.query(id, "get_state", json!({})).await?;
+            // Unknown state must not be interpreted as idle at this permission boundary.
+            let current = self.runtime.snapshot(id).await?;
+            if state["isStreaming"] != false || state["isCompacting"] != false || state["queuedMessageCount"] != 0
+                || !current.pending_ui.is_empty() || current.tools.iter().any(|tool| tool.status == "running") {
+                return Err(HostError::new("task_busy", "任务仍在生成、压缩或有排队消息，无法切换审批模式"));
+            }
+            if task.session_file.as_ref().is_none_or(|file| !file.is_file()) {
+                return Err(HostError::new("session_not_saved", "会话尚未落盘，请在首次回复完成后切换审批模式"));
+            }
+            self.store.validate_task_roots(id).await?;
+            let header = session_header(task.session_file.as_ref().unwrap())?;
+            if header["id"].as_str() != task.session_id.as_deref() {
+                return Err(HostError::new("session_mismatch", "Bound session identity changed"));
+            }
+            self.runtime.stop(id).await?;
+            self.store.end_run(&snapshot.run_id, "stopped", None).await?;
+            self.runtime.forget_stopped(id).await?;
+        }
+        // Persist the requested policy before starting. On failure, the old process
+        // stays stopped and retries use the new policy, never a silent rollback.
+        self.store.set_setting(&format!("task_approval:{id}"), mode.unwrap_or_default()).await?;
+        if alive {
+            self.continue_locked(id).await.map_err(|e| HostError::new(
+                "approval_switch_failed", format!("审批模式已保存，但 OMP 重启失败（{}）。修复后继续任务，新模式将在启动时应用。", e.code)
+            ))?;
+        }
+        self.store.task(id).await
     }
     pub async fn request(
         &self,

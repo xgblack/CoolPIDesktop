@@ -9,6 +9,21 @@ afterEach(cleanup);
 const base = { taskId: 'task-a', draft: '任务 A 草稿', onDraft: vi.fn(), onSend: vi.fn(), onAbort: vi.fn(), canSend: true, running: false, busy: false };
 
 describe('Composer', () => {
+  it('keeps approval switching in the existing toolbar and preserves drafts while switching', () => {
+    const onApprovalMode = vi.fn();
+    const {rerender} = render(<Composer {...base} onApprovalMode={onApprovalMode} approvalMode="write"/>);
+    const mode = screen.getByRole('button', {name:'审批模式'}) as HTMLButtonElement;
+    expect(mode.closest('.composer-tools')).toBe(screen.getByRole('button', {name:'添加内容'}).closest('.composer-tools'));
+    expect(mode.textContent).toContain('执行审批');
+    rerender(<Composer {...base} onApprovalMode={onApprovalMode} approvalMode="write" approvalSwitching busy/>);
+    expect((screen.getByRole('button',{name:'审批模式'}) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button',{name:'发送'}) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox',{name:'消息'}) as HTMLTextAreaElement).value).toBe(base.draft);
+    rerender(<Composer {...base} onApprovalMode={onApprovalMode} running/>);
+    expect((screen.getByRole('button',{name:'审批模式'}) as HTMLButtonElement).disabled).toBe(true);
+    rerender(<Composer {...base} onApprovalMode={onApprovalMode} approvalDisabled/>);
+    expect((screen.getByRole('button',{name:'审批模式'}) as HTMLButtonElement).disabled).toBe(true);
+  });
   it('sends with Enter, never modified Enter or IME confirmation', () => {
     const onSend = vi.fn();
     render(<Composer {...base} onSend={onSend} />);

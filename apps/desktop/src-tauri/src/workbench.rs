@@ -225,6 +225,10 @@ async fn restart_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSn
     w.restart(&task_id).await
 }
 #[tauri::command]
+async fn set_task_approval(w: State<'_, Workbench>, task_id: String, mode: Option<String>) -> Result<host_core::store::TaskRecord> {
+    w.set_approval_mode(&task_id, mode).await
+}
+#[tauri::command]
 async fn stop_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
     w.stop(&task_id).await
 }
@@ -605,6 +609,7 @@ pub fn run() {
             relocate_task,
             continue_task,
             restart_task,
+            set_task_approval,
             stop_task,
             list_tasks,
             task_snapshot,

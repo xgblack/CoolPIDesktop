@@ -42,6 +42,7 @@ try {
     case 'task_history':return{messages:[...(args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}]),...(extra[args.taskId]??[])],totalMessages:3};
     case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{const delta='实时增量'+(++n)+' ';runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
 
+    case 'set_task_approval':{const task=taskRecords.find(t=>t.id===args.taskId);await new Promise(resolve=>setTimeout(resolve,200));task.approvalMode=args.mode;return structuredClone(task);}
     case 'select_task_model':throw{code:'model_unavailable',message:'模型切换失败，保留当前实际模型',suggestion:'检查模型配置。'};
     case 'select_project_model':return null;
     case 'model_config_verify':return{defaultModel:'test/qwen3.7-flash',models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],stage:'loaded',message:'loaded'};
@@ -57,10 +58,13 @@ try {
   if(width<1024)await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'选择模型'}).click();
   await page.getByRole('menuitem',{name:'another-model · test'}).click();
+  await page.getByRole('button',{name:'审批模式',exact:true}).click();
+  await page.getByRole('menuitemradio',{name:'执行需审批',exact:true}).click();
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('新会话使用选择的真实模型');
   await page.getByRole('textbox',{name:'消息',exact:true}).press('Enter');
   await page.getByRole('region',{name:'对话消息'}).getByText('新会话使用选择的真实模型',{exact:true}).waitFor({timeout:600});
   assert.equal(await page.evaluate(()=>window.__calls.find(x=>x.cmd==='create_task')?.args.model),'test/another-model');
+  assert.equal(await page.evaluate(()=>window.__calls.find(x=>x.cmd==='set_task_approval'&&x.args.taskId==='created')?.args.mode),'write');
   await openSidebar();
   await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.__calls.some(x=>x.cmd==='continue_task'&&x.args.taskId==='a')),false);
@@ -85,6 +89,14 @@ try {
   await page.getByText(/实时增量1/).first().waitFor();
   await page.getByText(/实时增量10/).first().waitFor();
   await page.getByText('正在生成',{exact:false}).waitFor({state:'hidden'});
+  await page.getByRole('textbox',{name:'消息',exact:true}).fill('切换审批时保留草稿');
+  await page.getByRole('button',{name:'审批模式',exact:true}).click();
+  await page.getByRole('menuitemradio',{name:'写入与执行需审批',exact:true}).click();
+  await page.getByRole('button',{name:'审批模式',exact:true}).filter({hasText:'写入审批'}).waitFor();
+  assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'切换审批时保留草稿');
+  const bounds=await page.locator('.composer-toolbar .composer-tools').evaluateAll(elements=>elements.map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top};}));
+  assert.ok(bounds[0].right<=bounds[1].left,`composer controls overlap: ${JSON.stringify(bounds)}`);
+  await page.getByRole('textbox',{name:'消息',exact:true}).fill('');
   assert.equal(await page.getByText('发送后应立即可见的用户消息',{exact:true}).count(),1);
   if(width>=1024){
    await page.getByRole('button',{name:'收起侧栏',exact:true}).click();
@@ -189,6 +201,22 @@ try {
   await ledger.press('End');
   await page.waitForTimeout(500);assert.equal(await page.getByRole('button',{name:'对话',exact:true}).count(),1);
   await page.getByRole('button',{name:'对话',exact:true}).click();
+  await openSidebar();
+  await page.getByRole('button',{name:'长中文项目 · OMP 工作台界面改造与回归验证',exact:true}).click();
+  if(width<1024)await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'审批模式',exact:true}).filter({hasText:'写入审批'}).waitFor();
+  await page.getByRole('button',{name:'审批模式',exact:true}).click();
+  await page.getByRole('menuitemradio',{name:'自动批准',exact:true}).click();
+  const approval=page.getByRole('button',{name:'审批模式',exact:true});
+  await approval.filter({hasText:'自动批准'}).waitFor();
+  await page.waitForFunction(()=>localStorage.getItem('omp-default-approval-mode')==='yolo');
+  await page.waitForFunction(expected=>getComputedStyle(document.querySelector('[aria-label="审批模式"]')).color===expected,theme==='dark'?'rgb(242, 139, 151)':'rgb(197, 44, 62)');
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-approval.png'});
+  await page.reload();
+  await openSidebar();
+  await page.getByRole('button',{name:'长中文项目 · OMP 工作台界面改造与回归验证',exact:true}).click();
+  if(width<1024)await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'审批模式',exact:true}).filter({hasText:'自动批准'}).waitFor();
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
   await page.getByRole('button',{name:'外观与运行时',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();

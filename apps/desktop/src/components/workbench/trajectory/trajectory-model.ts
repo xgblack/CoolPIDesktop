@@ -19,7 +19,7 @@ export function ledgerRows(records:TrajectoryRecord[],collapsed:Set<number>,fold
  const ids=new Map(records.map(r=>[r.id,r]));
  const counts=new Map<number|null,number>(); for(const r of records)counts.set(r.turn,(counts.get(r.turn)??0)+1);
  for(const r of records){
-  if(matches&&!matches.has(r.id)||range&&!range.has(r.id))continue;
+  if(matches&&!matches.has(r.id))continue;
   if(r.turn!==turn){turn=r.turn;step=undefined;rows.push({key:`turn:${r.turn}:${r.id}`,type:'turn',record:r,label:r.turn==null?'会话上下文':`轮次 ${r.turn}`,count:counts.get(r.turn),depth:0});}
   if(!matches&&r.turn!=null&&collapsed.has(r.turn))continue;
   if(r.step!==step){step=r.step;if(r.step!=null)rows.push({key:`step:${r.turn}:${r.step}:${r.id}`,type:'step',record:r,label:`生成步骤 ${r.step}`,depth:0});}

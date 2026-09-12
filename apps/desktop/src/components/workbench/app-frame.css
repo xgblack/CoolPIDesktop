@@ -79,3 +79,9 @@
 .set-primary-folder{opacity:0;pointer-events:none}
 .project-folder-row:hover .set-primary-folder,.project-folder-row:focus-within .set-primary-folder{opacity:1;pointer-events:auto}
 @media(hover:none){.set-primary-folder{opacity:1;pointer-events:auto}}
+.composer-toolbar .composer-tools:first-child{flex-shrink:0;gap:2px}
+.composer-toolbar .composer-tools:last-child{flex:1;justify-content:flex-end}
+.composer-toolbar button[aria-label="选择模型"]{min-width:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;display:block;white-space:nowrap}
+.approval-mode-trigger{font-size:12px;padding-inline:6px;gap:5px}
+.approval-mode-danger,.approval-mode-danger:hover,.approval-mode-danger:focus,.approval-mode-danger[data-highlighted]{color:var(--ui-state-error)}
+@media(max-width:600px){.composer-toolbar{gap:4px}.composer-toolbar button[aria-label="选择模型"]{max-width:100px}.composer-toolbar .composer-tools{gap:4px}.approval-mode-trigger{font-size:11px}}

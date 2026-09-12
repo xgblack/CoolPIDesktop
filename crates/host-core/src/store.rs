@@ -32,6 +32,7 @@ pub struct TaskRecord {
     pub session_id: Option<String>,
     pub session_file: Option<PathBuf>,
     pub model: Option<String>,
+    pub approval_mode: Option<String>,
     pub last_run: Option<TaskRun>,
 }
 
@@ -132,6 +133,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         session_id: row.get(6)?,
         session_file: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
         model: row.get(8)?,
+        approval_mode: row.get(12)?,
         last_run: row
             .get::<_, Option<String>>(9)?
             .map(|id| -> rusqlite::Result<TaskRun> {
@@ -145,7 +147,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
             .transpose()?,
     })
 }
-const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
+const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code,(SELECT NULLIF(value,'') FROM settings WHERE key='task_approval:'||t.id) FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
 
 impl Store {
     pub async fn open(path: PathBuf) -> Result<Self> {
