@@ -14,8 +14,8 @@ export const recoverSession=(taskId:string,confirmed:boolean)=>invoke<string>('r
 import type {ModelConfig,ModelEdit,ModelCatalog,ModelVerification} from '../../../packages/host-contract/src';
 export const modelConfig={apply:()=>invoke<{applied:string[];skipped:string[];errors:{taskId:string;error:HostError}[]}>('model_config_apply'),load:()=>invoke<ModelConfig>('model_config_load'),save:(edit:ModelEdit)=>invoke<ModelConfig>('model_config_save',{edit}),catalog:()=>invoke<ModelCatalog>('model_catalog'),verify:(provider:string|null=null,modelId:string|null=null,projectId:string|null=null)=>invoke<ModelVerification>('model_config_verify',{provider,modelId,projectId})};
 
-import type {DirectoryPage,FilePreview,Attachment,TrajectoryPage} from '../../../packages/host-contract/src';
-export const trajectory={read:(taskId:string)=>invoke<TrajectoryPage>('task_trajectory',{taskId})};
+import type {DirectoryPage,FilePreview,Attachment,TrajectoryPage,TrajectoryImageData} from '../../../packages/host-contract/src';
+export const trajectory={read:(taskId:string,cursor:string|null=null,after=false)=>invoke<TrajectoryPage>('task_trajectory',{taskId,cursor,after}),image:(taskId:string,recordId:string,imageId:string)=>invoke<TrajectoryImageData>('task_trajectory_image',{taskId,recordId,imageId})};
 export const resources={
  list:(taskId:string,rootIndex:number,path:string)=>invoke<DirectoryPage>('list_task_files',{taskId,rootIndex,path}),
  preview:(taskId:string,rootIndex:number,path:string)=>invoke<FilePreview>('preview_task_file',{taskId,rootIndex,path}),

@@ -30,6 +30,8 @@ pub struct HostEvent {
     pub seq: u64,
     pub event_type: String,
     pub payload: Value,
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub trajectory:Vec<crate::trajectory_history::Record>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +82,8 @@ pub struct TaskSnapshot {
     pub pending_ui: Vec<Value>,
     #[serde(default)]
     pub tools: Vec<ToolActivity>,
+    #[serde(default)]
+    pub trajectory:Vec<crate::trajectory_history::Record>,
     #[serde(default)]
     pub usage: UsageSummary,
 }
@@ -177,13 +181,16 @@ impl TaskSnapshot {
             run_id: self.run_id.clone(),
             seq: self.seq,
             event_type: typ.into(),
+            trajectory:crate::trajectory_live::update(&mut self.trajectory,&self.run_id,self.seq,typ,&payload,std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()*1000.0),
             payload,
         };
         if serde_json::to_vec(&event).map_or(usize::MAX, |v| v.len()) > EVENT_BYTES / 2 {
             event.payload = json!({"truncated":true,"message":"Event exceeds display buffer; original session remains in OMP"});
             self.truncated = true;
         }
-        self.events.push_back(event.clone());
+        let mut diagnostic=event.clone();
+        diagnostic.trajectory.clear();
+        self.events.push_back(diagnostic);
         while self.events.len() > 256
             || self
                 .events
@@ -360,6 +367,7 @@ impl TaskManager {
             error: None,
             pending_ui: Vec::new(),
             tools: Vec::new(),
+            trajectory: Vec::new(),
             usage: UsageSummary::default(),
         }));
         map.insert(
@@ -740,6 +748,7 @@ impl Wire {
         }
         let models = self.query("get_available_models", json!({})).await?;
         let commands = self.query("get_available_commands", json!({})).await?;
+        self.query("set_subagent_subscription",json!({"level":"events"})).await?;
         if !models["models"].is_array() || !commands["commands"].is_array() {
             return Err(HostError::new(
                 "capability_query_failed",
@@ -994,6 +1003,7 @@ mod tests {
             error: None,
             pending_ui: Vec::new(),
             tools: Vec::new(),
+            trajectory: Vec::new(),
             usage: UsageSummary::default(),
         }
     }

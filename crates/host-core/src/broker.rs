@@ -255,6 +255,7 @@ mod tests {
         .await
         .expect("observer must subscribe before snapshot lock");
         broker.publish(HostEvent {
+            trajectory:vec![],
             task_id: "alpha".into(),
             run_id: "new".into(),
             seq: 1,

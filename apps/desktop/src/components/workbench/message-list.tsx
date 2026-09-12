@@ -51,7 +51,7 @@ function safeUrl(value: string): string | undefined {
   } catch { return undefined; }
 }
 
-const Markdown=memo(function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
+export const Markdown=memo(function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
   return <div className="min-w-0 break-words text-sm leading-relaxed [overflow-wrap:anywhere] [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_h1]:my-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:my-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:my-3 [&_h3]:font-semibold [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs [&_hr]:my-4 [&_hr]:border-border">
     <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={url => safeUrl(url) ?? ''} components={{
       pre: ({ children }) => <CodeBlock onError={onError}>{children}</CodeBlock>,

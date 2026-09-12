@@ -10,8 +10,10 @@ export function mergeSnapshot(old:TaskSnapshot[], incoming:TaskSnapshot):TaskSna
 export function applyEvent(snapshot:TaskSnapshot,event:HostEvent):TaskSnapshot {
  if(snapshot.runId!==event.runId||event.seq<=snapshot.seq)return snapshot;
  if(event.seq!==snapshot.seq+1)return snapshot;
+ const updates=new Map(event.trajectory?.map(r=>[r.id,r])??[]);
+ const trajectory=[...(snapshot.trajectory??[]).map(r=>{const next=updates.get(r.id);updates.delete(r.id);return next??r;}),...updates.values()].slice(-512);
  const p=event.payload as Record<string,any>;
- const next={...snapshot,seq:event.seq,events:[...snapshot.events,event].slice(-256)};
+ const next={...snapshot,trajectory,seq:event.seq,events:[...snapshot.events,{...event,trajectory:undefined}].slice(-256)};
  if(event.eventType==='status')next.status=p.status;
  if(event.eventType==='user_message')next.text='';
  if(event.eventType==='message_update'&&p.assistantMessageEvent?.type==='text_delta')next.text=(next.text??'')+p.assistantMessageEvent.delta;

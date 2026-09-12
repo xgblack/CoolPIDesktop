@@ -395,12 +395,25 @@ async fn task_history(
     w.history(&task_id, cursor).await
 }
 #[tauri::command]
-async fn task_trajectory(w: State<'_, Workbench>, task_id: String) -> Result<serde_json::Value> {
-    let task = w.store.task(&task_id).await?;
-    let file = task.session_file.ok_or_else(|| HostError::new("session_missing", "任务尚未建立会话"))?;
-    let session = task.session_id.ok_or_else(|| HostError::new("session_missing", "任务缺少会话身份"))?;
-    let h = host_core::trajectory_history::read(&file, &session)?;
-    Ok(serde_json::json!({"records":h.records,"nextCursor":null,"totalRecords":h.records.len(),"revision":h.revision,"warnings":h.warnings}))
+async fn task_trajectory(w: State<'_, Workbench>, task_id: String, cursor:Option<String>, after:Option<bool>) -> Result<host_core::trajectory_history::Page> {
+    let task=w.store.task(&task_id).await?;
+    let active=w.runtime.snapshot(&task_id).await.ok();
+    tokio::task::spawn_blocking(move || {
+        let history=match (task.session_file,task.session_id){
+            (Some(file),Some(session)) if file.exists()=>host_core::trajectory_history::read(&file,&session)?,
+            (None,None)=>host_core::trajectory_history::History{records:vec![],revision:"empty".into(),warnings:vec![]},
+            (Some(_),Some(_)) if active.as_ref().is_some_and(|s|matches!(s.status.as_str(),"ready"|"running"|"starting"))=>host_core::trajectory_history::History{records:vec![],revision:"pending".into(),warnings:vec![]},
+            _=>return Err(HostError::new("session_missing","任务会话文件不存在")),
+        };
+        host_core::trajectory_history::page(history,cursor.as_deref(),after.unwrap_or(false))
+    }).await.map_err(|e|HostError::new("trajectory_read",e))?
+}
+#[tauri::command]
+async fn task_trajectory_image(w:State<'_,Workbench>,task_id:String,record_id:String,image_id:String)->Result<Value>{
+    let task=w.store.task(&task_id).await?;
+    let file=task.session_file.ok_or_else(||HostError::new("session_missing","会话不存在"))?;
+    let session=task.session_id.ok_or_else(||HostError::new("session_missing","会话身份不存在"))?;
+    tokio::task::spawn_blocking(move ||host_core::trajectory_history::image(&file,&session,&record_id,&image_id)).await.map_err(|e|HostError::new("trajectory_image",e))?
 }
 #[tauri::command]
 async fn task_usage(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
@@ -611,6 +624,7 @@ pub fn run() {
             respond_ui,
             task_history,
             task_trajectory,
+            task_trajectory_image,
             task_usage,
             task_git_status,
             task_git_diff,

@@ -24,6 +24,8 @@ try {
 
    const snapshot=id=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[],text:'',pendingUi:[],runtime:{status:'ready',capabilities:{models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],state:{model:{provider:'test',id:'qwen3.7-flash'}}}}});
    const messages=[{role:'user',content:'请评估这个工作台的任务隔离与消息呈现，并给出具体修改建议。',timestamp:1},{role:'assistant',timestamp:2,content:[{type:'thinking',thinking:'检查异步响应与工作台布局。'},{type:'text',text:'## 工作台验证\n\n同一项目下，每个任务保留独立的 **会话、草稿和模型**。\n\n- 按需加载会话，不自动重发消息\n- 切换任务后旧审批失效\n\n```typescript\nconst description = "这是一段很长的代码，不应撑破界面";\nconst path = "/a/very/long/path/that/should/remain/in/the/code/scroll/container/without/expanding/the/workbench";\nawait continueTask(task.id);\n```\n\n[官方文档](https://example.com) · ![远程图片](https://example.com/no-fetch.png)\n\n| 验证项 | 结果 |\n| --- | --- |\n| 草稿隔离 | 保留当前输入 |\n| 异步响应 | 丢弃过期结果 |'},{type:'toolCall',name:'read',arguments:{path:'src/workbench.tsx'}}]},{role:'toolResult',toolCallId:'tool1',timestamp:3,content:'检查完成：任务 A 与任务 B 使用独立会话。\n'.repeat(3)}];
+   const trajectoryRecords=Array.from({length:300},(_,i)=>({id:'record-'+i,aliases:[],kind:i%3===0?'user':i%3===1?'assistant':'tool',turn:Math.floor(i/3)+1,step:i%3===0?null:1,parentId:i%3===2?'record-'+(i-1):null,toolCallId:i%3===2?'call-'+i:null,name:i%3===2?'read':'message',status:'succeeded',content:'轨迹内容 '+i,input:i%3===2?{path:'src/file-'+i+'.ts'}:null,output:i%3===2?'outputneedle '+i:null,model:'test/model',startedAt:1726000000000+i*100,completedAt:1726000000040+i*100,durationMs:40,ttftMs:i%3===1?5:null,usage:i%3===1?{inputTokens:123,outputTokens:45}:null,images:i===299?[{id:'inline:0',mime:'image/png',label:'会话图片'}]:[],truncated:false}));
+   window.__trajectoryAppend=()=>{const id='a';const run=runs[id];run.trajectory??=[];run.status='running';const record={...trajectoryRecords[298],id:'live-a',aliases:['message:assistant:99999'],turn:1,status:'running',content:'真实增量内容',startedAt:1726000050000,completedAt:null,durationMs:null};run.trajectory.push(record);const event={taskId:id,runId:run.runId,seq:++run.seq,eventType:'message_update',payload:{},trajectory:[record]};run.events.push(event);connection?.onmessage?.({data:JSON.stringify({type:'event',event})});};
    window.__calls=[];
    window.__TAURI_INTERNALS__={invoke:async(cmd,args={})=>{window.__calls.push({cmd,args});switch(cmd){
     case 'observer_info':return{url:'ws://127.0.0.1:9999',token:'test'};case 'task_snapshot':return structuredClone(runs[args.taskId]);case 'list_projects':return[project];case 'task_records':return structuredClone(taskRecords);case 'list_tasks':return Object.values(runs);
@@ -34,6 +36,8 @@ try {
     case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
     case 'task_git_diff':return{rootIndex:args.rootIndex,path:args.path,staged:false,binary:false,text:'diff --git a/src/workbench.tsx b/src/workbench.tsx\n-old content\n+new content'};
     case 'task_usage':return runs[args.taskId];
+    case 'task_trajectory':{const all=trajectoryRecords;const index=args.cursor?all.findIndex(r=>r.id===args.cursor):-1;const start=args.after&&index>=0?index:Math.max(0,(index>=0?index:all.length)-50);const end=args.after&&index>=0?Math.min(all.length,index+50):index>=0?index:all.length;const records=all.slice(start,end);return{records,nextCursor:start>0?records[0]?.id:null,afterCursor:records.at(-1)?.id,totalRecords:all.length,revision:'fixture',warnings:[]};}
+    case 'task_trajectory_image':return{mime:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII='};
     case 'task_history':return{messages:[...(args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}]),...(extra[args.taskId]??[])],totalMessages:3};
     case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{const delta='实时增量'+(++n)+' ';runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
 
@@ -119,6 +123,42 @@ try {
   await page.getByRole('button',{name:'选择模型'}).click();await page.getByRole('menuitem',{name:'another-model · test'}).click();
   await page.getByText('模型切换失败，保留当前实际模型').waitFor();
   assert.match(await page.getByRole('button',{name:'选择模型'}).innerText(),/qwen3.7-flash/);
+  await openSidebar();await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
+  await page.getByRole('button',{name:'轨迹',exact:true}).click();
+  const ledger=page.getByRole('table',{name:'轨迹记录表'});
+  await ledger.locator('[data-record-id="record-299"]').waitFor();
+  assert.ok(await ledger.locator('[data-record-id]').count()<50,'trajectory must render only a visible window');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.getByRole('button',{name:'加载更早记录',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'100 / 300'}).waitFor();
+  assert.ok(await page.evaluate(()=>window.__calls.some(c=>c.cmd==='task_trajectory'&&c.args.cursor==='record-250')));
+  await ledger.press('End');
+  await page.getByRole('button',{name:'折叠工具调用',exact:true}).click();
+  assert.equal(await ledger.locator('[data-kind="tool"]').count(),0);
+  await page.getByRole('button',{name:'展开工具调用',exact:true}).click();
+  await page.getByRole('button',{name:'折叠轮次',exact:true}).click();
+  assert.equal(await ledger.locator('[data-record-id]').count(),0);
+  await page.getByRole('button',{name:'展开轮次',exact:true}).click();
+  await page.getByRole('searchbox',{name:'搜索轨迹'}).fill('outputneedle 299');
+  await ledger.locator('[data-record-id="record-299"]').waitFor();
+  assert.equal(await ledger.locator('[data-record-id]').count(),1);
+  await ledger.getByRole('cell',{name:'检查 read record-299'}).click();
+  await page.getByRole('img',{name:'会话图片'}).waitFor();
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-trajectory-details.png'});
+  await page.getByRole('button',{name:'关闭轨迹详情',exact:true}).click();
+  await page.getByRole('searchbox',{name:'搜索轨迹'}).fill('');
+  await ledger.press('End');
+  await page.getByRole('button',{name:'耗时',exact:true}).click();
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-trajectory.png'});
+  // Reading older rows must not be interrupted by incoming live records.
+  await ledger.focus();await ledger.press('Home');await page.waitForTimeout(50);
+  const before=await ledger.evaluate(el=>el.scrollTop);
+  await page.evaluate(()=>window.__trajectoryAppend());
+  await page.getByRole('button',{name:'回到底部',exact:true}).waitFor();
+  assert.ok(await ledger.evaluate(el=>el.scrollTop < el.scrollHeight-el.clientHeight-4),'live append must not force the reader to the bottom');
+  await ledger.press('End');
+  await page.waitForTimeout(500);assert.equal(await page.getByRole('button',{name:'对话',exact:true}).count(),1);
+  await page.getByRole('button',{name:'对话',exact:true}).click();
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
   await page.getByRole('button',{name:'外观与运行时',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();

@@ -2,11 +2,11 @@ export type RuntimeStatus='not_found'|'not_executable'|'version_unreadable'|'ver
 export interface HostError{code:string;message:string;suggestion?:string}
 export interface RuntimeInfo{status:RuntimeStatus;executable?:string|null;version?:string|null;protocol?:number|null;capabilities?:unknown;detail?:string|null;error?:HostError|null}
 export type TaskStatus='starting'|'ready'|'running'|'idle'|'failed'|'interrupted'|'stopped';
-export interface HostEvent{taskId:string;runId:string;seq:number;eventType:string;payload:unknown}
+export interface HostEvent{taskId:string;runId:string;seq:number;eventType:string;payload:unknown;trajectory?:TrajectoryRecord[]}
 export interface ToolActivity{id:string;name:string;status:'running'|'succeeded'|'failed'|'cancelled'|string;args:unknown;result?:unknown;seq:number}
 export interface UsageSummary{contextTokens?:number;contextWindow?:number;contextPercent?:number;inputTokens?:number;outputTokens?:number;reasoningTokens?:number;cacheReadTokens?:number;cacheWriteTokens?:number;totalTokens?:number;cost?:number}
 export interface PendingUiRequest{id:string;method:'confirm'|'select'|'input'|'editor';title?:string;message?:string;options?:string[]}
-export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[];tools?:ToolActivity[];usage?:UsageSummary}
+export interface TaskSnapshot{taskId:string;runId:string;seq:number;status:TaskStatus;runtime?:RuntimeInfo;events:HostEvent[];text?:string;truncated?:boolean;error?:HostError|null;pendingUi?:PendingUiRequest[];tools?:ToolActivity[];trajectory?:TrajectoryRecord[];usage?:UsageSummary}
 export interface GitChange{path:string;originalPath?:string|null;indexStatus:string;worktreeStatus:string;kind:'modified'|'renamed'|'untracked'|'deleted'|'conflicted'|string}
 export interface GitStatus{rootIndex:number;available:boolean;branch?:string|null;changes:GitChange[]}
 export interface CommitPreview{branch:string;root:string;head:string;tree:string;paths:string[]}
@@ -33,7 +33,7 @@ export interface TrajectoryRecord {
  images:TrajectoryImage[]; truncated:boolean;
 }
 export interface TrajectoryImage {id:string;mime:string;label:string}
-export interface TrajectoryPage {records:TrajectoryRecord[];nextCursor:string|null;totalRecords:number;revision:string;warnings:string[]}
+export interface TrajectoryPage {afterCursor?:string|null;records:TrajectoryRecord[];nextCursor:string|null;totalRecords:number;revision:string;warnings:string[]}
 export interface TrajectoryImageData {mime:string;data:string}
 export interface ConfigModel { id:string; originalId?:string; name?:string; api?:string; contextWindow?:number; maxTokens?:number; reasoning?:boolean; thinking?:Record<string,unknown>; input?:string[]; cost?:Record<string,unknown> }
 export interface ModelProvider { id:string; baseUrl:string|null; api:string|null; auth:string|null; authHeader:boolean|null; credentialConfigured:boolean; models:ConfigModel[] }
