@@ -20,8 +20,8 @@ export function ledgerRows(records:TrajectoryRecord[],collapsed:Set<number>,fold
  const counts=new Map<number|null,number>(); for(const r of records)counts.set(r.turn,(counts.get(r.turn)??0)+1);
  for(const r of records){
   if(matches&&!matches.has(r.id))continue;
-  if(r.turn!==turn){turn=r.turn;step=undefined;rows.push({key:`turn:${r.turn}:${r.id}`,type:'turn',record:r,label:r.turn==null?'会话上下文':`轮次 ${r.turn}`,count:counts.get(r.turn),depth:0});}
-  if(!matches&&r.turn!=null&&collapsed.has(r.turn))continue;
+  if(r.turn!==turn){turn=r.turn;step=undefined;rows.push({key:`turn:${r.turn}:${r.id}`,type:'turn',record:r,label:r.turn==null?'会话上下文':`第 ${r.turn} 轮`,count:counts.get(r.turn),depth:0});}
+  if(!matches&&collapsed.has(r.turn==null?-1:r.turn))continue;
   if(r.step!==step){step=r.step;if(r.step!=null)rows.push({key:`step:${r.turn}:${r.step}:${r.id}`,type:'step',record:r,label:`生成步骤 ${r.step}`,depth:0});}
   let depth=0;let parent=r.parentId;const visited=new Set([r.id]);let toolAncestor=false;let foldedAncestor=false;
   while(parent&&ids.has(parent)&&!visited.has(parent)){visited.add(parent);const p=ids.get(parent)!;toolAncestor ||= p.kind==='tool';foldedAncestor ||= foldedAssistants.has(p.id);depth++;parent=p.parentId;}
