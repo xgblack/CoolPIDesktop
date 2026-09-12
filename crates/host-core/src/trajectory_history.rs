@@ -374,7 +374,17 @@ pub fn read(file: &Path, expected_session: &str) -> Result<History> {
         }
         let m = if typ == "message" { &v["message"] } else { &v };
         let role = m["role"].as_str().unwrap_or(typ);
-        if role == "toolResult" || typ == "toolResult" {
+        if typ == "custom"
+            && v["customType"] == "tool_execution_start"
+            && v["data"]["toolCallId"]
+                .as_str()
+                .is_some_and(|cid| tools.contains_key(cid))
+        {
+            let cid = v["data"]["toolCallId"].as_str().unwrap();
+            let r = &mut records[tools[cid]];
+            r.started_at = stamp(v["data"].get("startedAt"));
+            r.aliases.push(id.clone());
+        } else if role == "toolResult" || typ == "toolResult" {
             let cid = m["toolCallId"].as_str().unwrap_or("");
             let idx = if let Some(idx) = tools.get(cid) {
                 *idx
@@ -423,6 +433,10 @@ pub fn read(file: &Path, expected_session: &str) -> Result<History> {
             r.duration_ms = num(m.get("durationMs").or_else(|| m.get("duration")));
             if let (Some(end), Some(d)) = (r.completed_at, r.duration_ms) {
                 r.started_at = Some(end - d);
+            } else if let (Some(start), Some(end)) = (r.started_at, r.completed_at) {
+                if end >= start {
+                    r.duration_ms = Some(end - start);
+                }
             }
             let owner = r.clone();
             if let Some(results) = m["details"]["results"].as_array() {

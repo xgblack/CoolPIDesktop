@@ -11,6 +11,24 @@ fn fixture(body: &str) -> (PathBuf, String) {
 }
 
 #[test]
+fn pairs_persisted_tool_start_without_extra_context_and_preserves_unknown_markers() {
+    let (p, id) = fixture(&format!(
+        "{}\n{}\n{}\n{}\n",
+        json!({"type":"message","id":"a","message":{"role":"assistant","content":[{"type":"toolCall","id":"c","name":"read","arguments":{"path":"complete/path"}}]}}),
+        json!({"type":"custom","id":"start","customType":"tool_execution_start","data":{"toolCallId":"c","startedAt":"2026-09-12T00:00:00.000Z","args":{"path":"truncated"}}}),
+        json!({"type":"message","id":"result","message":{"role":"toolResult","toolCallId":"c","timestamp":1789171200250_f64,"content":"ok"}}),
+        json!({"type":"custom","id":"unknown","customType":"tool_execution_start","data":{"toolCallId":"missing","startedAt":"invalid"}}),
+    ));
+    let h = read(&p, &id).unwrap();
+    assert_eq!(h.records.len(), 3);
+    let tool = &h.records[1];
+    assert_eq!(tool.duration_ms, Some(250.));
+    assert_eq!(tool.input.as_ref().unwrap()["path"], "complete/path");
+    assert!(tool.aliases.contains(&"start".to_owned()));
+    assert_eq!(h.records[2].id, "unknown");
+}
+
+#[test]
 fn projects_messages_and_pairs_tool_result() {
     let (p, id) = fixture(&format!(
         "{}\n{}\n{}\n",
