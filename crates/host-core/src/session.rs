@@ -271,6 +271,11 @@ impl Workbench {
                                 .map(|(p, m)| format!("{p}/{m}")),
                         )
                         .await?;
+                    if task.session_id.is_none() {
+                        if let Some(model) = &task.model {
+                            self.store.set_setting(&format!("project_model:{}", task.project_id), model.clone()).await?;
+                        }
+                    }
                     return self.runtime.snapshot(id).await;
                 }
                 tokio::time::sleep(Duration::from_millis(30)).await;
@@ -508,14 +513,18 @@ impl Workbench {
                     "OMP model selection mismatch",
                 ));
             }
-            self.store
-                .set_model(id, Some(format!("{provider}/{model_id}")))
-                .await?;
+            self.store.save_model_selection(id, format!("{provider}/{model_id}")).await?;
             return Ok(state);
         }
-        self.store
-            .set_model(id, Some(format!("{provider}/{model_id}")))
-            .await?;
+        let task = self.store.task(id).await?;
+        let executable = self.store.executable().await?;
+        let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
+        crate::probe(&path).await?;
+        let available = crate::model_config::discover(&path, &task.roots[0]).await?;
+        if !available.models.iter().any(|m| m["provider"] == provider && m["id"] == model_id) {
+            return Err(HostError::new("model_unavailable", "所选模型已不可用"));
+        }
+        self.store.save_model_selection(id, format!("{provider}/{model_id}")).await?;
         Ok(json!({"model":{"provider":provider,"id":model_id}}))
     }
     pub async fn recover_session(&self, id: &str, confirmed: bool) -> Result<String> {

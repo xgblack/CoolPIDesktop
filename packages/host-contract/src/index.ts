@@ -22,9 +22,22 @@ export interface Project{id:string;name:string;roots:string[];archived:boolean;t
 export interface TaskRecord{id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
 export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
 export interface Message{role:string;content:unknown;timestamp?:number;toolCallId?:string}
+export type TrajectoryKind='user'|'assistant'|'tool'|'context'|'compaction';
+export type TrajectoryStatus='running'|'succeeded'|'failed'|'cancelled'|'interrupted'|'unknown';
+export interface TrajectoryRecord {
+ id:string; aliases:string[]; kind:TrajectoryKind; turn:number|null; step:number|null;
+ parentId?:string|null; toolCallId?:string|null; name:string; status:TrajectoryStatus;
+ content:unknown; input?:unknown; output?:unknown; model?:string|null;
+ startedAt?:number|null; completedAt?:number|null; durationMs?:number|null; ttftMs?:number|null;
+ timingSource?:'omp'|'host'|null; usage?:UsageSummary|null; error?:string|null;
+ images:TrajectoryImage[]; truncated:boolean;
+}
+export interface TrajectoryImage {id:string;mime:string;label:string}
+export interface TrajectoryPage {records:TrajectoryRecord[];nextCursor:string|null;totalRecords:number;revision:string;warnings:string[]}
+export interface TrajectoryImageData {mime:string;data:string}
 export interface ConfigModel { id:string; originalId?:string; name?:string; api?:string; contextWindow?:number; maxTokens?:number; reasoning?:boolean; thinking?:Record<string,unknown>; input?:string[]; cost?:Record<string,unknown> }
 export interface ModelProvider { id:string; baseUrl:string|null; api:string|null; auth:string|null; authHeader:boolean|null; credentialConfigured:boolean; models:ConfigModel[] }
 export interface ModelConfig {path:string;exists:boolean;revision:string;providers:ModelProvider[]}
 export interface ModelEdit {revision:string;originalId:string|null;provider:ModelProvider;credentialAction:'keep'|'replace'|'clear';credential:string|null;deleted:boolean}
 export interface ModelCatalog {version:string;source:string;cached:boolean;models:(ConfigModel&{provider:string;baseUrl:string})[]}
-export interface ModelVerification {stage:'loaded'|'connected';message:string;models:{id:string;provider:string;name?:string}[]}
+export interface ModelVerification {defaultModel?:string|null;projectModel?:string|null;stage:'loaded'|'connected';message:string;models:{id:string;provider:string;name?:string}[]}

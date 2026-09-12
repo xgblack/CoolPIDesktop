@@ -4,7 +4,7 @@ import {act,cleanup,renderHook,waitFor} from '@testing-library/react';
 import {useWorkbench} from './use-workbench';
 import {host,projects,records,sendPrompt} from '../../host';
 import type {TaskRecord,TaskSnapshot} from '../../../../../packages/host-contract/src';
-vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn()},records:{list:vi.fn(),history:vi.fn()},modelConfig:{verify:vi.fn().mockResolvedValue({models:[]}),load:vi.fn().mockResolvedValue({providers:[]})},hostError:(e:unknown)=>e}));
+vi.mock('../../host',()=>({sendPrompt:vi.fn(),host:{list:vi.fn(),observer:vi.fn(()=>new Promise(()=>{})),snapshot:vi.fn()},projects:{list:vi.fn(),model:vi.fn()},records:{list:vi.fn(),history:vi.fn()},modelConfig:{verify:vi.fn().mockResolvedValue({models:[]}),load:vi.fn().mockResolvedValue({providers:[]})},hostError:(e:unknown)=>e}));
 const task=(id:string):TaskRecord=>({id,projectId:'p',title:id,roots:['/tmp'],pinned:false,archived:false,sessionId:id,sessionFile:id,model:null});
 const a=task('a'),b=task('b');
 const run=(id:string):TaskSnapshot=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[]});
@@ -90,4 +90,56 @@ it('reports discovery failure and deduplicates retries without replacing a remov
  expect(result.current.modelsError).toBeNull();
  expect(result.current.modelsLoading).toBe(false);
  expect(result.current.projectModels.p).toBe('test/removed');
+});
+
+it.each([
+ ['test/last','test/default','test/last'],
+ ['test/removed','test/default','test/default'],
+ [null,'test/default','test/default'],
+ ['test/removed','test/missing',''],
+ [null,null,''],
+])('resolves persisted %s and OMP default %s to %s',async(projectModel,defaultModel,expected)=>{
+ const {modelConfig}=await import('../../host');
+ vi.mocked(modelConfig.verify).mockResolvedValue({stage:'loaded',message:'loaded',projectModel,defaultModel,models:[{provider:'test',id:'first'},{provider:'test',id:'default'},{provider:'test',id:'last'}]});
+ const first=renderHook(useWorkbench);
+ act(()=>first.result.current.chooseProject('p'));
+ await waitFor(()=>expect(first.result.current.modelsLoading).toBe(false));
+ expect(first.result.current.projectModels.p).toBe(expected);
+ first.unmount();
+ const second=renderHook(useWorkbench);
+ act(()=>second.result.current.chooseProject('p'));
+ await waitFor(()=>expect(second.result.current.modelsLoading).toBe(false));
+ expect(second.result.current.projectModels.p).toBe(expected);
+});
+
+it('ignores discovery from an old project after switching',async()=>{
+ const {modelConfig}=await import('../../host');
+ const pending=deferred<Awaited<ReturnType<typeof modelConfig.verify>>>();
+ vi.mocked(modelConfig.verify).mockImplementation((_p,_m,id)=>id==='a'?pending.promise:Promise.resolve({stage:'loaded',message:'loaded',defaultModel:'test/b',models:[{provider:'test',id:'b'}]}));
+ const {result}=renderHook(useWorkbench);
+ act(()=>result.current.chooseProject('a'));
+ act(()=>result.current.chooseProject('b'));
+ await waitFor(()=>expect(result.current.projectModels.b).toBe('test/b'));
+ await act(async()=>pending.resolve({stage:'loaded',message:'loaded',defaultModel:'test/a',models:[{provider:'test',id:'a'}]}));
+ expect(result.current.models[0].id).toBe('b');
+ expect(result.current.projectModels.a).toBeUndefined();
+});
+
+it('changes project selection only after successful host persistence',async()=>{
+ const {modelConfig}=await import('../../host');
+ vi.mocked(modelConfig.verify).mockResolvedValue({stage:'loaded',message:'loaded',defaultModel:'test/default',models:[{provider:'test',id:'default'},{provider:'test',id:'chosen'}]});
+ const {result}=renderHook(useWorkbench);
+ act(()=>result.current.chooseProject('p'));
+ await waitFor(()=>expect(result.current.projectModels.p).toBe('test/default'));
+ vi.mocked(projects.model).mockRejectedValueOnce({code:'model_unavailable',message:'removed'});
+ await act(async()=>{await expect(result.current.selectProjectModel('test','chosen')).rejects.toMatchObject({code:'model_unavailable'});});
+ expect(result.current.projectModels.p).toBe('test/default');
+ const pending=deferred<void>();
+ vi.mocked(projects.model).mockReturnValue(pending.promise);
+ let selection!:Promise<void>;
+ act(()=>{selection=result.current.selectProjectModel('test','chosen');});
+ expect(result.current.projectModels.p).toBe('test/default');
+ await act(async()=>{pending.resolve();await selection;});
+ expect(result.current.projectModels.p).toBe('test/chosen');
+ expect(projects.model).toHaveBeenLastCalledWith('p','test','chosen');
 });

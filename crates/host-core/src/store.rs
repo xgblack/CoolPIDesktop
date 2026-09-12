@@ -590,6 +590,20 @@ impl Store {
         .await
     }
 
+    /// Persist an explicit, validated selection and its project preference atomically.
+    pub async fn save_model_selection(&self, id: &str, model: String) -> Result<()> {
+        let id = id.to_owned();
+        self.access(move |c| {
+            let tx = c.transaction().map_err(db)?;
+            let project: String = tx.query_row("SELECT project_id FROM tasks WHERE id=?1", [&id], |r| r.get(0)).map_err(db)?;
+            tx.execute("UPDATE tasks SET model=?2,updated_at=?3 WHERE id=?1", params![id,model,now()]).map_err(db)?;
+            tx.execute("INSERT INTO settings VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![format!("project_model:{project}"),model]).map_err(db)?;
+            tx.commit().map_err(db)?;
+            Ok(())
+        }).await
+    }
+
     pub async fn set_model(&self, id: &str, model: Option<String>) -> Result<()> {
         let id = id.to_owned();
         self.access(move |c| {

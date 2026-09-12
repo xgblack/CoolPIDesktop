@@ -552,6 +552,8 @@ pub async fn catalog(cache: &Path, version: &str) -> Result<Catalog> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verification {
+    pub default_model: Option<String>,
+    pub project_model: Option<String>,
     pub stage: String,
     pub message: String,
     pub models: Vec<Value>,
@@ -623,7 +625,16 @@ pub async fn discover(executable: &Path, cwd: &Path) -> Result<Verification> {
         .iter()
         .map(|m| json!({"id":m["id"],"provider":m["provider"],"name":m["name"]}))
         .collect();
+    let (ok, out, errors) = output(executable, cwd, &["config".into(), "get".into(), "modelRoles".into(), "--json".into()]).await?;
+    if !ok || !errors.is_empty() {
+        return Err(err("config_load_failed", "无法读取 OMP 默认模型配置"));
+    }
+    let config: Value = serde_json::from_slice(&out)
+        .map_err(|_| err("config_load_failed", "OMP 默认模型配置格式无效"))?;
+    let default_model = config["value"]["default"].as_str().map(str::to_owned);
     Ok(Verification {
+        default_model,
+        project_model: None,
         stage: "loaded".into(),
         message: "OMP 已加载配置；模型列表不代表真实连接成功".into(),
         models,
@@ -710,6 +721,8 @@ pub async fn connect(
         ));
     }
     Ok(Verification {
+        default_model: available.default_model,
+        project_model: available.project_model,
         stage: "connected".into(),
         message: "真实连接成功：OMP 已收到该模型的完整回复".into(),
         models: available.models,
@@ -751,7 +764,7 @@ mod tests {
             ("401 fixture-credential", "authentication_failed"),
             ("invalid protocol fixture-credential", "protocol_failed"),
         ] {
-            fs::write(&exe, format!("#!/bin/sh\nif [ \"$1\" = models ]; then\n echo '{{\"models\":[{{\"provider\":\"test\",\"id\":\"model\"}}]}}'\nelse\n echo '{}' >&2\n exit 1\nfi\n", raw)).unwrap();
+            fs::write(&exe, format!("#!/bin/sh\nif [ \"$1\" = models ]; then\n echo '{{\"models\":[{{\"provider\":\"test\",\"id\":\"model\"}}]}}'\nelif [ \"$1\" = config ]; then\n echo '{{\"value\":{{}}}}'\nelse\n echo '{}' >&2\n exit 1\nfi\n", raw)).unwrap();
             fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
             let error = connect(&exe, config.parent().unwrap(), "test", "model")
                 .await

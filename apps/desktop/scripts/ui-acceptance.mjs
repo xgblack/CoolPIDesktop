@@ -38,7 +38,8 @@ try {
     case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{const delta='实时增量'+(++n)+' ';runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
 
     case 'select_task_model':throw{code:'model_unavailable',message:'模型切换失败，保留当前实际模型',suggestion:'检查模型配置。'};
-    case 'model_config_verify':return{models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],stage:'loaded',message:'loaded'};
+    case 'select_project_model':return null;
+    case 'model_config_verify':return{defaultModel:'test/qwen3.7-flash',models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],stage:'loaded',message:'loaded'};
     case 'model_config_load':return{path:'/isolated/models.yml',exists:false,revision:'missing',providers:[]};
     case 'runtime_status':return{status:'model_required',version:'18.1.15',error:{code:'model_required',message:'没有可用模型',suggestion:'请先配置 OMP 模型。'}};
     default:throw{code:'fixture_unsupported',message:cmd};

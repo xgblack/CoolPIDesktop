@@ -395,6 +395,14 @@ async fn task_history(
     w.history(&task_id, cursor).await
 }
 #[tauri::command]
+async fn task_trajectory(w: State<'_, Workbench>, task_id: String) -> Result<serde_json::Value> {
+    let task = w.store.task(&task_id).await?;
+    let file = task.session_file.ok_or_else(|| HostError::new("session_missing", "任务尚未建立会话"))?;
+    let session = task.session_id.ok_or_else(|| HostError::new("session_missing", "任务缺少会话身份"))?;
+    let h = host_core::trajectory_history::read(&file, &session)?;
+    Ok(serde_json::json!({"records":h.records,"nextCursor":null,"totalRecords":h.records.len(),"revision":h.revision,"warnings":h.warnings}))
+}
+#[tauri::command]
 async fn task_usage(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
     w.refresh_usage(&task_id).await
 }
@@ -482,11 +490,24 @@ async fn model_catalog(
     host_core::model_config::catalog(&cache, &version).await
 }
 #[tauri::command]
+async fn select_project_model(w: State<'_, Workbench>, project_id: String, provider: String, model_id: String) -> Result<()> {
+    let project = w.store.projects().await?.into_iter().find(|p| p.id == project_id)
+        .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?;
+    let executable = model_executable(&w).await?;
+    let available = host_core::model_config::discover(&executable, &project.roots[0]).await?;
+    if !available.models.iter().any(|m| m["provider"] == provider && m["id"] == model_id) {
+        return Err(HostError::new("model_unavailable", "所选模型已不可用"));
+    }
+    w.store.set_setting(&format!("project_model:{project_id}"), format!("{provider}/{model_id}")).await
+}
+
+#[tauri::command]
 async fn model_config_verify(
     app: tauri::AppHandle,
     w: State<'_, Workbench>,
     provider: Option<String>,
     model_id: Option<String>,
+    project_id: Option<String>,
 ) -> Result<host_core::model_config::Verification> {
     let path = model_executable(&w).await?;
     let cwd = app
@@ -494,11 +515,19 @@ async fn model_config_verify(
         .app_cache_dir()
         .map_err(|_| HostError::new("config_verify", "无法定位验证目录"))?
         .join("model-probe");
+    let cwd = if let Some(id) = &project_id {
+        w.store.projects().await?.into_iter().find(|p| &p.id == id)
+            .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?.roots[0].clone()
+    } else { cwd };
     host_core::model_config::load(&host_core::model_config::config_path()?)?;
     if let (Some(p), Some(id)) = (provider, model_id) {
         host_core::model_config::connect(&path, &cwd, &p, &id).await
     } else {
-        host_core::model_config::discover(&path, &cwd).await
+        let mut result = host_core::model_config::discover(&path, &cwd).await?;
+        if let Some(id) = project_id {
+            result.project_model = w.store.setting(&format!("project_model:{id}")).await?;
+        }
+        Ok(result)
     }
 }
 
@@ -548,6 +577,7 @@ pub fn run() {
             model_config_save,
             model_catalog,
             model_config_verify,
+            select_project_model,
             open_external_link,
             runtime_status,
             list_projects,
@@ -580,6 +610,7 @@ pub fn run() {
             abort_task,
             respond_ui,
             task_history,
+            task_trajectory,
             task_usage,
             task_git_status,
             task_git_diff,
