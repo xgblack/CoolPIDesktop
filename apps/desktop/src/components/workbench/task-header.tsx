@@ -1,3 +1,4 @@
+import {OpenInApp} from './open-in-app';
 import {PanelRight,Menu,MoreHorizontal,Square,RotateCcw,FolderOpen,Copy,Download} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem,DropdownMenuSeparator} from '@/components/ui/dropdown-menu';
@@ -11,6 +12,7 @@ export function TaskHeader({task,run,busy,onSidebar,onStop,onRestart,onAbort,onR
   <div className="task-header-actions">
   {onTrajectory?<Button variant="ghost" size="sm" onClick={onTrajectory} aria-pressed={trajectoryOpen}>{trajectoryOpen?'对话':'轨迹'}</Button>:null}
   {historyControls}
+  <OpenInApp taskId={task.id} disabled={task.archived || !task.roots.length}/>
   {run?.status==='running'?<Button variant="outline" size="sm" disabled={busy} onClick={onAbort}><Square/>取消</Button>:null}
   <IconButton label="工具、用量与变更" onClick={onDetails} aria-pressed={detailsOpen}><PanelRight/></IconButton><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="任务运行操作"><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!task.sessionId} onSelect={onCopySessionId}><Copy/>复制会话 ID</DropdownMenuItem><DropdownMenuItem disabled={exporting||!task.sessionId||!task.sessionFile||!!run&&['running','starting'].includes(run.status)||!!run?.pendingUi?.length} onSelect={onDownloadSession}><Download/>{exporting?'正在下载会话…':'下载会话 Session'}</DropdownMenuItem><DropdownMenuSeparator/><DropdownMenuItem onSelect={onRecovery}><FolderOpen/>目录与会话恢复</DropdownMenuItem>{onRuntime?<DropdownMenuItem onSelect={onRuntime}><RotateCcw/>当前任务运行</DropdownMenuItem>:<><DropdownMenuItem disabled={busy||!active} onSelect={onStop}><Square/>停止进程</DropdownMenuItem><DropdownMenuItem disabled={busy||!run||task.archived} onSelect={onRestart}><RotateCcw/>重启并继续原会话</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>
   </div>

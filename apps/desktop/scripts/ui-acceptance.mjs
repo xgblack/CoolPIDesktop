@@ -31,7 +31,11 @@ try {
    trajectoryRecords[280].turn=93;trajectoryRecords[283].turn=93;
    window.__trajectoryAppend=()=>{const id='a';const run=runs[id];run.trajectory??=[];run.status='running';const record={...trajectoryRecords[298],id:'live-a',aliases:['message:assistant:99999'],turn:1,status:'running',content:'真实增量内容',startedAt:1726000050000,completedAt:null,durationMs:null};run.trajectory.push(record);const event={taskId:id,runId:run.runId,seq:++run.seq,eventType:'message_update',payload:{},trajectory:[record]};run.events.push(event);connection?.onmessage?.({data:JSON.stringify({type:'event',event})});};
    window.__calls=[];
-   window.__TAURI_INTERNALS__={invoke:async(cmd,args={})=>{window.__calls.push({cmd,args});switch(cmd){
+   window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(cmd,args={})=>{window.__calls.push({cmd,args});switch(cmd){
+    case 'plugin:event|listen':return 1;case 'plugin:event|unlisten':case 'plugin:window|set_size':return null;
+    case 'open_in_app_apps':return window.__appsRemoved?[{id:'finder',name:'访达'}]:[{id:'finder',name:'访达'},{id:'vscode',name:'VS Code'},{id:'intellij',name:'IntelliJ IDEA'},{id:'pycharm',name:'PyCharm'},{id:'webstorm',name:'WebStorm'},{id:'goland',name:'GoLand'},{id:'warp',name:'Warp'},{id:'terminal',name:'终端'}];
+    case 'open_in_app_icon':return 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" rx="5" fill="#2585e6"/><path d="M6 8L10 12L6 16M13 16H18" fill="none" stroke="white" stroke-width="2"/></svg>');
+    case 'open_in_app':if(window.__openFails)throw{code:'open_app_failed',message:'应用未接受打开请求，请检查安装状态后重试'};await new Promise(resolve=>setTimeout(resolve,window.__openDelay??0));return null;
     case 'observer_info':return{url:'ws://127.0.0.1:9999',token:'test'};case 'task_snapshot':return structuredClone(runs[args.taskId]);case 'list_projects':return[project];case 'task_records':return structuredClone(taskRecords);case 'list_tasks':return Object.values(runs);
     case 'create_task':{const created={...task('created'),title:args.title,sessionId:null,sessionFile:null,model:args.model};taskRecords.push(created);runs.created=snapshot('created');return structuredClone(created);}
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
@@ -62,6 +66,35 @@ try {
    }}};
   });
   await page.goto(process.env.UI_BASE_URL??'http://127.0.0.1:5173');
+  if(process.env.OPEN_IN_APP_ONLY){
+   if(width<1024)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();
+   await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
+   await page.getByRole('button',{name:'选择打开方式',exact:true}).click();
+   await page.getByRole('menuitem',{name:'在Warp中打开',exact:true}).waitFor();
+   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-open-app-menu.png'});
+   const menu=await page.getByRole('menu').boundingBox();
+   assert(menu&&menu.x>=0&&menu.x+menu.width<=width+1&&menu.y+menu.height<=height+1,'menu stays inside viewport');
+   await page.getByRole('menuitem',{name:'在Warp中打开',exact:true}).click();
+   await page.waitForFunction(()=>window.__calls.some(c=>c.cmd==='open_in_app'));
+   assert.deepEqual(await page.evaluate(()=>window.__calls.filter(c=>c.cmd==='open_in_app').at(-1).args),{taskId:'a',appId:'warp'});
+   assert.equal(await page.evaluate(()=>localStorage.getItem('cool-pi-desktop.open-in-app.choice')),'warp');
+   await page.evaluate(()=>{window.__openDelay=600;});
+   await page.getByRole('button',{name:'在Warp中打开工作目录',exact:true}).click();
+   await page.waitForTimeout(300);
+   assert.equal(await page.locator('.open-in-app').getAttribute('aria-busy'),'true');
+   await page.waitForTimeout(400);
+   await page.evaluate(()=>{window.__openDelay=0;window.__openFails=true;});
+   await page.getByRole('button',{name:'在Warp中打开工作目录',exact:true}).click();
+   await page.getByRole('status').filter({hasText:'应用未接受打开请求'}).waitFor();
+   await page.evaluate(()=>{window.__openFails=false;window.__appsRemoved=true;});
+   await page.getByRole('button',{name:'选择打开方式',exact:true}).click();
+   await page.getByRole('menuitem',{name:'刷新应用列表',exact:true}).click();
+   await page.getByRole('button',{name:'在访达中打开工作目录',exact:true}).waitFor();
+   assert.equal(await page.evaluate(()=>window.__calls.filter(c=>c.cmd==='open_in_app_apps').length),2);
+   assert.deepEqual(errors.filter(e=>!e.includes('favicon.ico')),[]);
+   await page.close();
+   continue;
+  }
   const openSidebar=async()=>{if(width<1024)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();};
   await openSidebar();
   await page.getByRole('button',{name:/运行管理.*个进程/}).click();

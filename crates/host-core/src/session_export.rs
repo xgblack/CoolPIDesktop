@@ -14,7 +14,7 @@ fn failed(e: impl std::fmt::Display) -> HostError {
     HostError::new("session_export_failed", e)
 }
 
-fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let parent = path.parent().ok_or_else(|| failed("无效会话资源路径"))?;
     let dir = files::absolute_dir(parent)?;
     let file = files::open_at(
@@ -70,7 +70,7 @@ fn references(value: &Value, refs: &mut BTreeSet<String>) -> Result<()> {
     Ok(())
 }
 
-fn blob_path(file: &Path, hash: &str) -> Result<PathBuf> {
+pub(crate) fn blob_path(file: &Path, hash: &str) -> Result<PathBuf> {
     for parent in file.ancestors().skip(1) {
         let candidate = parent.join("blobs").join(hash);
         match candidate.try_exists() {

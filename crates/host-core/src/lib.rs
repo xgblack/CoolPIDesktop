@@ -23,3 +23,7 @@ pub mod lifecycle;
 pub mod terminal_handoff;
 
 mod session_export;
+
+mod session_fork;
+
+pub mod open_in_app;

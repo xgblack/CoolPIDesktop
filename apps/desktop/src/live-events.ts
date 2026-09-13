@@ -15,7 +15,8 @@ export function applyEvent(snapshot:TaskSnapshot,event:HostEvent):TaskSnapshot {
  const p=event.payload as Record<string,any>;
  const next={...snapshot,trajectory,seq:event.seq,events:[...snapshot.events,{...event,trajectory:undefined}].slice(-256)};
  if(event.eventType==='status')next.status=p.status;
- if(event.eventType==='user_message')next.text='';
+ if(event.eventType==='user_message'){next.text='';next.tools=[];next.turnStartedAt=p.timestamp;next.turnCompletedAt=null;}
+ if(typeof p.completedAt==='number' && ['status','error'].includes(event.eventType))next.turnCompletedAt=p.completedAt;
  if(event.eventType==='message_update'&&p.assistantMessageEvent?.type==='text_delta')next.text=(next.text??'')+p.assistantMessageEvent.delta;
  if(event.eventType==='error'){next.error=p as any;next.status='failed';}
  return next;

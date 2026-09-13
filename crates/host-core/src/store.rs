@@ -398,6 +398,23 @@ impl Store {
         }).await
     }
 
+    pub(crate) async fn insert_fork(&self, source: TaskRecord, id: String, title: String, roots: Vec<PathBuf>, session_id: String, file: PathBuf) -> Result<TaskRecord> {
+        self.access(move |c| {
+            let encoded = serde_json::to_string(&roots).map_err(db)?;
+            let tx = c.transaction().map_err(db)?;
+            tx.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at,model) VALUES(?1,?2,?3,?4,?4,1,?5,?5,?6)", params![id,source.project_id,title,encoded,now(),source.model]).map_err(db)?;
+            for (index, root) in roots.iter().enumerate() {
+                tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
+            }
+            tx.execute("INSERT INTO session_bindings(task_id,session_id,session_file) VALUES(?1,?2,?3)", params![id,session_id,file.to_string_lossy()]).map_err(db)?;
+            if let Some(mode) = source.approval_mode {
+                tx.execute("INSERT INTO settings(key,value) VALUES(?1,?2)", params![format!("task_approval:{id}"),mode]).map_err(db)?;
+            }
+            tx.commit().map_err(db)?;
+            c.query_row(&format!("{TASK_QUERY} WHERE t.id=?1"), [id], task_row).map_err(db)
+        }).await
+    }
+
     pub async fn task_roots(&self, id: &str) -> Result<Vec<TaskRoot>> {
         let id = id.to_owned();
         self.access(move |c| {

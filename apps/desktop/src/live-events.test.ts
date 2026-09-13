@@ -15,3 +15,9 @@ it('recovery uses snapshot text, not retained diagnostic deltas',()=>{
  expect(mergeSnapshot([snapshot],recovered)[0].text).toBe('Complete answer');
  expect(applyEvent(recovered,{...event,seq:91}).text).toBe('Complete answer world');
 });
+it('carries authoritative turn timing and clears old tools on the next prompt',()=>{
+ const started=applyEvent({...snapshot,turnStartedAt:1,turnCompletedAt:2,tools:[{id:'old',name:'read',status:'succeeded',args:{},seq:1}]},{...event,eventType:'user_message',payload:{text:'next',timestamp:1000}});
+ expect(started.turnStartedAt).toBe(1000);expect(started.turnCompletedAt).toBeNull();expect(started.tools).toEqual([]);
+ const ended=applyEvent(started,{...event,seq:3,eventType:'status',payload:{status:'interrupted',completedAt:2500}});
+ expect(ended.turnStartedAt).toBe(1000);expect(ended.turnCompletedAt).toBe(2500);
+});

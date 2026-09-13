@@ -69,6 +69,7 @@ export function useWorkbench(){
   return success;
  };
  const chooseTask=(task:TaskRecord)=>{selection.current=task.id;feed.current.reset();setHistoryError(null);setHistoryBusy(false);setError(null);setTaskId(task.id);setProjectId(task.projectId);};
+ const fork=async(id:string,timestamp:number)=>{await act(async()=>{const created=await records.fork(id,timestamp);await refresh();if(selection.current===id)chooseTask(created);});};
  const chooseProject=(id:string)=>{if(id===projectId)void refreshModels();selection.current='';feed.current.reset();setHistoryError(null);setHistoryBusy(false);setError(null);setProjectId(id);setTaskId('');};
  const task=tasks.find(t=>t.id===taskId),run=runs.find(r=>r.taskId===taskId),project=ps.find(p=>p.id===projectId);
  const runId=run?.runId;
@@ -102,5 +103,5 @@ export function useWorkbench(){
  useEffect(()=>{if(acknowledged)setOutbox(old=>{const next={...old};delete next[taskId];return next;});},[acknowledged,taskId]);
  const addAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:[...new Set([...(old[id]??[]),resource])].slice(0,8)}));
  const removeAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:(old[id]??[]).filter(value=>value!==resource)}));
- return{projects:ps,tasks,runs,models,modelsLoading:modelsLoading||modelsProject!==projectId,modelsError,refreshModels,projectModels,setProjectModels,selectProjectModel,project,task,run,projectId,taskId,chooseTask,chooseProject,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,references,setReferences};
+ return{projects:ps,tasks,runs,models,modelsLoading:modelsLoading||modelsProject!==projectId,modelsError,refreshModels,projectModels,setProjectModels,selectProjectModel,project,task,run,projectId,taskId,chooseTask,chooseProject,fork,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,references,setReferences};
 }

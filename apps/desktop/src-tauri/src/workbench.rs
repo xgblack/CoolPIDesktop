@@ -6,6 +6,20 @@ use tauri_plugin_dialog::DialogExt;
 type Result<T> = std::result::Result<T, HostError>;
 
 #[tauri::command]
+async fn open_in_app_apps(refresh: bool) -> Vec<host_core::open_in_app::OpenApp> {
+    host_core::open_in_app::list(refresh).await
+}
+#[tauri::command]
+async fn open_in_app_icon(app: tauri::AppHandle, app_id: String) -> Result<String> {
+    let cache = app.path().app_cache_dir().map_err(|_| HostError::new("app_icon_cache", "无法定位应用图标缓存"))?;
+    host_core::open_in_app::icon(&app_id, &cache).await
+}
+#[tauri::command]
+async fn open_in_app(w: State<'_, Workbench>, task_id: String, app_id: String) -> Result<()> {
+    w.open_in_app(&task_id, &app_id).await
+}
+
+#[tauri::command]
 async fn runtime_tasks(w:State<'_,Workbench>)->Result<Vec<host_core::lifecycle::RuntimeTaskInfo>>{w.runtime_tasks().await}
 #[tauri::command]
 async fn runtime_focus(w:State<'_,Workbench>,task_id:Option<String>)->Result<()>{w.runtime_focus(task_id).await}
@@ -428,6 +442,10 @@ async fn download_task_session(app: tauri::AppHandle, w: State<'_, Workbench>, t
     }).await.map_err(|e| HostError::new("session_export_failed", e))?
 }
 #[tauri::command]
+async fn fork_task(w: State<'_, Workbench>, task_id: String, timestamp: f64) -> Result<TaskRecord> {
+    w.fork_task(&task_id, timestamp).await
+}
+#[tauri::command]
 async fn task_history(
     w: State<'_, Workbench>,
     task_id: String,
@@ -632,6 +650,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            open_in_app_apps, open_in_app_icon, open_in_app,
             runtime_tasks,runtime_focus,runtime_keep_alive,runtime_action,runtime_release_idle,runtime_command,
             model_config_apply,
             model_config_load,
@@ -672,6 +691,7 @@ pub fn run() {
             abort_task,
             respond_ui,
             task_history,
+            fork_task,
             download_task_session,
             task_trajectory,
             task_trajectory_image,

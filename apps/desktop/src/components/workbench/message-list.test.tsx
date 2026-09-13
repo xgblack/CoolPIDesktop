@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MessageList } from './message-list';
 import { invoke } from '@tauri-apps/api/core';
+
+globalThis.ResizeObserver = class {observe(){} unobserve(){} disconnect(){}};
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -51,4 +53,57 @@ describe('message rendering', () => {
     fireEvent.click(screen.getByRole('button', { name: '复制代码' }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
   });
+});
+
+it('summarizes the whole turn once, copies only its final answer and forks its exact boundary', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined), onFork = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {value:{writeText},configurable:true});
+  const messages = [
+    {role:'user',content:'Inspect the file',timestamp:1000},
+    {role:'assistant',timestamp:1100,completedAt:1500,usage:{input:100,output:10,totalTokens:120,cacheRead:10,cacheWrite:0,cost:{total:0.01}},content:[{type:'thinking',thinking:'Read first'},{type:'text',text:'I will inspect it'},{type:'toolCall',id:'c1',name:'read'}]},
+    {role:'toolResult',toolCallId:'c1',content:'File contents',timestamp:2000},
+    {role:'assistant',timestamp:2100,completedAt:4000,usage:{input:200,output:20,totalTokens:240,cacheRead:20,cacheWrite:0,cost:{total:0.02}},content:[{type:'thinking',thinking:'Review done'},{type:'text',text:'**Final** answer'}]},
+  ];
+  render(<MessageList {...base} messages={messages} onFork={onFork} query="final"/>);
+  expect(screen.getAllByLabelText('本轮对话信息')).toHaveLength(1);
+  expect(screen.getByText('360 tok')).toBeTruthy();
+  expect(screen.getByText('用时 3秒')).toBeTruthy();
+  fireEvent.click(screen.getByLabelText('复制回答'));
+  await waitFor(()=>expect(writeText).toHaveBeenCalledWith('**Final** answer'));
+  fireEvent.click(screen.getByLabelText('从此处 Fork'));
+  await waitFor(()=>expect(onFork).toHaveBeenCalledWith(2100));
+  fireEvent.click(screen.getByLabelText('查看本轮用量'));
+  expect(await screen.findByText('300')).toBeTruthy();
+  expect(screen.getByText('$0.030000')).toBeTruthy();
+});
+
+it('does not claim missing usage or timestamps are zero, and reports fork failures', async () => {
+  const error = new Error('session changed'), onError = vi.fn();
+  render(<MessageList {...base} onError={onError} onFork={vi.fn().mockRejectedValue(error)} messages={[{role:'user',content:'ask'},{role:'assistant',content:'answer',timestamp:1234}]} />);
+  expect(screen.getByText('用时未知')).toBeTruthy();
+  expect(screen.getByText('完成时间未知')).toBeTruthy();
+  fireEvent.click(screen.getByLabelText('从此处 Fork'));
+  await waitFor(()=>expect(onError).toHaveBeenCalledWith(error));
+  fireEvent.click(screen.getByLabelText('查看本轮用量'));
+  expect(await screen.findAllByText('未知')).toHaveLength(6);
+});
+
+it('keeps a live wall clock through tools, streaming and switching tasks, then stops it', () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(10000);
+    const {rerender} = render(<MessageList {...base} running startedAt={1000} tools={[{id:'t',name:'read',status:'running',args:{},seq:1}]}/>);
+    expect(screen.getByText('正在执行 · 9秒 · 1项')).toBeTruthy();
+    act(()=>vi.advanceTimersByTime(2000));
+    expect(screen.getByText('正在执行 · 11秒 · 1项')).toBeTruthy();
+    rerender(<MessageList {...base} running startedAt={1000} streamingText="response"/>);
+    expect(screen.getByText('正在执行 · 11秒 · 0项')).toBeTruthy();
+    rerender(<MessageList {...base} taskKey="b" running startedAt={11000}/>);
+    expect(screen.getByText('正在执行 · 1秒 · 0项')).toBeTruthy();
+    rerender(<MessageList {...base} running startedAt={1000}/>);
+    expect(screen.getByText('正在执行 · 11秒 · 0项')).toBeTruthy();
+    rerender(<MessageList {...base}/>);
+    expect(screen.queryByText(/正在执行/)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {vi.useRealTimers();}
 });

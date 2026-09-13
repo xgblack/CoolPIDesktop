@@ -76,6 +76,10 @@ pub struct UsageSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskSnapshot {
+    #[serde(default)]
+    pub turn_started_at: Option<f64>,
+    #[serde(default)]
+    pub turn_completed_at: Option<f64>,
     pub task_id: String,
     pub run_id: String,
     pub seq: u64,
@@ -180,7 +184,17 @@ fn update_tool(snapshot: &mut TaskSnapshot, typ: &str, event: &Value) {
     }
 }
 impl TaskSnapshot {
-    fn event(&mut self, typ: &str, payload: Value) -> HostEvent {
+    fn event(&mut self, typ: &str, mut payload: Value) -> HostEvent {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0;
+        if typ == "user_message" {
+            self.turn_started_at = Some(now);
+            self.turn_completed_at = None;
+            self.tools.clear();
+            payload["timestamp"] = json!(now);
+        } else if (typ == "error" || typ == "status" && matches!(payload["status"].as_str(), Some("idle" | "interrupted" | "stopped" | "failed"))) && self.turn_started_at.is_some() && self.turn_completed_at.is_none() {
+            self.turn_completed_at = Some(now);
+            payload["completedAt"] = json!(now);
+        }
         self.seq += 1;
         let mut event = HostEvent {
             task_id: self.task_id.clone(),
@@ -379,6 +393,8 @@ impl TaskManager {
             tools: Vec::new(),
             trajectory: Vec::new(),
             usage: UsageSummary::default(),
+            turn_started_at: None,
+            turn_completed_at: None,
         }));
         map.insert(
             id.clone(),
@@ -1022,8 +1038,29 @@ mod tests {
             tools: Vec::new(),
             trajectory: Vec::new(),
             usage: UsageSummary::default(),
+            turn_started_at: None,
+            turn_completed_at: None,
         }
     }
+    #[test]
+    fn turn_clock_survives_event_eviction_and_resets_only_for_a_new_prompt() {
+        let mut state = snapshot();
+        let start = state.event("user_message", json!({"text":"hello"}));
+        assert_eq!(start.payload["timestamp"].as_f64(), state.turn_started_at);
+        let anchor = state.turn_started_at;
+        for _ in 0..300 { state.event("message_update", json!({})); }
+        assert_eq!(state.turn_started_at, anchor);
+        assert!(!state.events.iter().any(|event| event.event_type == "user_message"));
+        let end = state.status("interrupted");
+        assert_eq!(end.payload["completedAt"].as_f64(), state.turn_completed_at);
+        let completed = state.turn_completed_at;
+        state.status("stopped");
+        assert_eq!(state.turn_completed_at, completed);
+        state.event("user_message", json!({"text":"next"}));
+        assert!(state.turn_completed_at.is_none());
+        assert!(state.turn_started_at >= anchor);
+    }
+
     #[test]
     fn ui_responses_validate_method_and_choice() {
         let confirm = json!({"method":"confirm"});

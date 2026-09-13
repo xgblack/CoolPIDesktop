@@ -421,3 +421,24 @@ async fn attachments_are_task_owned_and_prompt_payload_is_bounded() {
             == "attachment_missing"
     );
 }
+
+#[tokio::test]
+async fn conversation_fork_prevents_deleting_its_shared_worktree() {
+    let root = repo();
+    let w = Workbench::open(root.join("data")).await.unwrap();
+    let project = w.store.register_project("P",vec![root.join("one")],true).await.unwrap();
+    let source = w.create_task(&project.id,"source","isolated").await.unwrap();
+    let roots = w.store.validate_task_roots(&source.id).await.unwrap();
+    let file = root.join("fork-source.jsonl");
+    let entries = [
+        serde_json::json!({"type":"session","version":3,"id":"source","cwd":roots[0]}),
+        serde_json::json!({"type":"message","id":"u","parentId":null,"message":{"role":"user","content":"hello","timestamp":1}}),
+        serde_json::json!({"type":"message","id":"a","parentId":"u","message":{"role":"assistant","content":"answer","timestamp":2,"completedAt":3}}),
+    ];
+    std::fs::write(&file,entries.iter().map(|e|format!("{e}\n")).collect::<String>()).unwrap();
+    w.store.bind(&source.id,"source",file).await.unwrap();
+    let fork = w.fork_task(&source.id,2.0).await.unwrap();
+    assert_eq!(w.store.validate_task_roots(&fork.id).await.unwrap(),roots);
+    assert_eq!(w.cleanup_worktrees(&source.id).await.unwrap_err().code,"worktree_in_use");
+    assert!(roots[0].join("base.txt").exists());
+}

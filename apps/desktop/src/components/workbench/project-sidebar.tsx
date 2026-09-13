@@ -15,7 +15,7 @@ export function ProjectSidebar({projects,tasks,runs,projectId,taskId,loading,bus
  const project=projects.find(p=>p.id===projectId);
  const visible=tasks.filter(t=>t.projectId===projectId&&(showArchived||!t.archived)&&t.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
  return <aside className="project-sidebar" aria-label="项目与任务">
-  <div className="sidebar-brand"><span className="brand-mark">π</span><strong>Cool PI</strong><IconButton label="收起侧栏" onClick={onClose}><PanelLeftClose/></IconButton></div>
+  <div className="sidebar-brand"><img className="brand-logo" src="/logo.svg" width="36" height="36" alt=""/><strong>Cool PI</strong><IconButton label="收起侧栏" onClick={onClose}><PanelLeftClose/></IconButton></div>
   <div className="sidebar-primary"><Button variant="ghost" onClick={onNewTask} disabled={!project||project.archived||busy}><Plus/>新对话<span>⌘ N</span></Button><input aria-label="搜索任务" placeholder="搜索任务…" value={query} onChange={e=>setQuery(e.target.value)}/></div>
   <div className="task-list-heading"><span>项目</span><Button variant="ghost" size="icon-sm" aria-label="添加项目" onClick={onNewProject}><Plus/></Button><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="项目列表选项"><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuCheckboxItem checked={showArchived} onCheckedChange={onArchived}>显示归档</DropdownMenuCheckboxItem></DropdownMenuContent></DropdownMenu></div>
   <nav className="task-list" aria-label="任务列表">

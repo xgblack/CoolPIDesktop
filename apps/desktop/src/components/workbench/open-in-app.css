@@ -1,0 +1,10 @@
+.open-in-app{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--radius-md);flex:none}
+.open-in-app[data-error=true]{border-color:var(--destructive)}
+.open-in-app[aria-busy=true]{opacity:.5}
+.open-in-app .open-app-chevron{width:22px;border-left:1px solid var(--border);border-top-left-radius:0;border-bottom-left-radius:0}
+.open-app-icon{width:18px;height:18px;object-fit:contain;flex:none}
+.open-app-menu{width:240px;max-height:min(540px,var(--radix-dropdown-menu-content-available-height))}
+.open-app-item{gap:10px;font-size:12px;min-height:32px}
+.open-app-item[data-selected=true]{background:var(--accent)}
+.open-app-check{margin-left:auto;width:14px;height:14px}
+.open-app-error{padding:8px;font-size:12px;color:var(--destructive);overflow-wrap:anywhere}

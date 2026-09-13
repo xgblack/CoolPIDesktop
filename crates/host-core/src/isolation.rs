@@ -281,6 +281,17 @@ impl Workbench {
             .filter(|r| r.mode == "isolated" && r.status != "trashed")
         {
             verify(root).await?;
+            let owner = id.to_owned();
+            let worktree = root.worktree_path.clone().unwrap();
+            let referenced = self.store.access(move |c| {
+                let mut statement = c.prepare("SELECT execution_path FROM task_roots WHERE task_id != ?1 AND status != 'trashed'").map_err(|e| HostError::new("storage_error", e))?;
+                let paths = statement.query_map([owner], |r| r.get::<_,String>(0)).map_err(|e| HostError::new("storage_error", e))?;
+                for path in paths {
+                    if PathBuf::from(path.map_err(|e| HostError::new("storage_error", e))?).starts_with(&worktree) { return Ok(true); }
+                }
+                Ok(false)
+            }).await?;
+            if referenced { return Err(HostError::new("worktree_in_use", "其他会话（包括 Fork）仍在使用此工作目录，不能清理")); }
             if git::worktree_dirty(root.worktree_path.as_ref().unwrap()).await? {
                 return Err(HostError::new(
                     "worktree_dirty",
