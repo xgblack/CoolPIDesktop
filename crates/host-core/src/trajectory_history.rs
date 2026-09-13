@@ -476,6 +476,7 @@ pub fn read(file: &Path, expected_session: &str) -> Result<History> {
             let kind = match role {
                 "user" => "user",
                 "assistant" => "assistant",
+                "system" => "system",
                 _ => "context",
             };
             let mut r = make_record(
@@ -542,11 +543,16 @@ pub fn read(file: &Path, expected_session: &str) -> Result<History> {
                 | "model_change"
                 | "thinking_level_change"
                 | "context"
+                | "system"
+                | "system_prompt"
+                | "session_init"
         ) {
             let mut r = make_record(
                 id.clone(),
                 if typ == "compaction" {
                     "compaction"
+                } else if typ == "system" || typ == "system_prompt" || (typ == "session_init" && v.get("systemPrompt").is_some()) {
+                    "system"
                 } else {
                     "context"
                 },
@@ -557,7 +563,8 @@ pub fn read(file: &Path, expected_session: &str) -> Result<History> {
                 &mut warnings,
             );
             r.content = v
-                .get("summary")
+                .get("systemPrompt")
+                .or_else(|| v.get("summary"))
                 .or_else(|| v.get("content"))
                 .cloned()
                 .unwrap_or(v.clone());
@@ -677,6 +684,7 @@ impl<T> Pipe for T {}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page {
+    pub initial_system_prompt: Option<Record>,
     pub records: Vec<Record>,
     pub next_cursor: Option<String>,
     pub after_cursor: Option<String>,
@@ -712,6 +720,7 @@ pub fn page(history: History, cursor: Option<&str>, after: bool) -> Result<Page>
         }
     }
     Ok(Page {
+        initial_system_prompt: history.records.iter().find(|r| r.kind == "system").cloned(),
         next_cursor: if start > 0 {
             records.first().map(|r| r.id.clone())
         } else {

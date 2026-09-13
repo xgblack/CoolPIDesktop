@@ -25,6 +25,7 @@ try {
    const snapshot=id=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[],text:'',pendingUi:[],runtime:{status:'ready',capabilities:{models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],state:{model:{provider:'test',id:'qwen3.7-flash'}}}}});
    const messages=[{role:'user',content:'请评估这个工作台的任务隔离与消息呈现，并给出具体修改建议。',timestamp:1},{role:'assistant',timestamp:2,content:[{type:'thinking',thinking:'检查异步响应与工作台布局。'},{type:'text',text:'## 工作台验证\n\n同一项目下，每个任务保留独立的 **会话、草稿和模型**。\n\n- 按需加载会话，不自动重发消息\n- 切换任务后旧审批失效\n\n```typescript\nconst description = "这是一段很长的代码，不应撑破界面";\nconst path = "/a/very/long/path/that/should/remain/in/the/code/scroll/container/without/expanding/the/workbench";\nawait continueTask(task.id);\n```\n\n[官方文档](https://example.com) · ![远程图片](https://example.com/no-fetch.png)\n\n| 验证项 | 结果 |\n| --- | --- |\n| 草稿隔离 | 保留当前输入 |\n| 异步响应 | 丢弃过期结果 |'},{type:'toolCall',name:'read',arguments:{path:'src/workbench.tsx'}}]},{role:'toolResult',toolCallId:'tool1',timestamp:3,content:'检查完成：任务 A 与任务 B 使用独立会话。\n'.repeat(3)}];
    const trajectoryRecords=Array.from({length:300},(_,i)=>({id:'record-'+i,aliases:[],kind:i%3===0?'user':i%3===1?'assistant':'tool',turn:Math.floor(i/3)+1,step:i%3===0?null:1,parentId:i%3===2?'record-'+(i-1):null,toolCallId:i%3===2?'call-'+i:null,name:i%3===2?'read':'message',status:'succeeded',content:'轨迹内容 '+i,input:i%3===2?{path:'src/file-'+i+'.ts'}:null,output:i%3===2?'outputneedle '+i:null,model:'test/model',startedAt:1726000000000+i*100,completedAt:1726000000040+i*100,durationMs:40,ttftMs:i%3===1?5:null,usage:i%3===1?{inputTokens:123,outputTokens:45}:null,images:i===299?[{id:'inline:0',mime:'image/png',label:'会话图片'}]:[],truncated:false}));
+   trajectoryRecords[0]={...trajectoryRecords[0],kind:'system',turn:null,step:null,name:'session_init',content:'# 工作区规则\n\n这是会话保存的 **初始系统提示词**。\n\n- 先检查项目事实\n- 只报告已验证的结果',usage:null};
    trajectoryRecords[280].turn=93;trajectoryRecords[283].turn=93;
    window.__trajectoryAppend=()=>{const id='a';const run=runs[id];run.trajectory??=[];run.status='running';const record={...trajectoryRecords[298],id:'live-a',aliases:['message:assistant:99999'],turn:1,status:'running',content:'真实增量内容',startedAt:1726000050000,completedAt:null,durationMs:null};run.trajectory.push(record);const event={taskId:id,runId:run.runId,seq:++run.seq,eventType:'message_update',payload:{},trajectory:[record]};run.events.push(event);connection?.onmessage?.({data:JSON.stringify({type:'event',event})});};
    window.__calls=[];
@@ -37,7 +38,7 @@ try {
     case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
     case 'task_git_diff':return{rootIndex:args.rootIndex,path:args.path,staged:false,binary:false,text:'diff --git a/src/workbench.tsx b/src/workbench.tsx\n-old content\n+new content'};
     case 'task_usage':return runs[args.taskId];
-    case 'task_trajectory':{const all=trajectoryRecords;const index=args.cursor?all.findIndex(r=>r.id===args.cursor):-1;const start=args.after&&index>=0?index:Math.max(0,(index>=0?index:all.length)-50);const end=args.after&&index>=0?Math.min(all.length,index+50):index>=0?index:all.length;const records=all.slice(start,end);return{records,nextCursor:start>0?records[0]?.id:null,afterCursor:records.at(-1)?.id,totalRecords:all.length,revision:'fixture',warnings:[]};}
+    case 'task_trajectory':{const all=trajectoryRecords;const index=args.cursor?all.findIndex(r=>r.id===args.cursor):-1;const start=args.after&&index>=0?index:Math.max(0,(index>=0?index:all.length)-50);const end=args.after&&index>=0?Math.min(all.length,index+50):index>=0?index:all.length;const records=all.slice(start,end);return{initialSystemPrompt:trajectoryRecords[0],records,nextCursor:start>0?records[0]?.id:null,afterCursor:records.at(-1)?.id,totalRecords:all.length,revision:'fixture',warnings:[]};}
     case 'task_trajectory_image':return{mime:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII='};
     case 'task_history':return{messages:[...(args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}]),...(extra[args.taskId]??[])],totalMessages:3};
     case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{const delta='实时增量'+(++n)+' ';runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
@@ -142,15 +143,21 @@ try {
   await ledger.locator('[data-record-id="record-299"]').waitFor();
   assert.ok(await ledger.locator('[data-record-id]').count()<50,'trajectory must render only a visible window');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await ledger.press('Home');
+  await ledger.getByRole('cell',{name:'检查 历史初始系统提示词 record-0'}).click();
+  await page.getByRole('tabpanel').getByRole('heading',{name:'工作区规则',exact:true}).waitFor();
+  assert.equal(await page.getByRole('toolbar').getByRole('button',{name:'系统提示词',exact:true}).count(),0);
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-system-prompt.png'});
+  await page.getByRole('button',{name:'关闭轨迹详情'}).click();
   await page.getByRole('button',{name:'加载更早记录',exact:true}).click();
-  await page.getByRole('status').filter({hasText:'100 / 300'}).waitFor();
+  await page.getByRole('status').filter({hasText:'101 / 300'}).waitFor();
   assert.ok(await page.evaluate(()=>window.__calls.some(c=>c.cmd==='task_trajectory'&&c.args.cursor==='record-250')));
   await ledger.press('End');
   await page.getByRole('button',{name:'折叠工具调用',exact:true}).click();
   assert.equal(await ledger.locator('[data-kind="tool"]').count(),0);
   await page.getByRole('button',{name:'展开工具调用',exact:true}).click();
   await page.getByRole('button',{name:'折叠轮次',exact:true}).click();
-  assert.equal(await ledger.locator('[data-record-id]').count(),0);
+  assert.equal(await ledger.locator('[data-record-id]:not([data-kind=system])').count(),0);
   await page.getByRole('button',{name:'展开轮次',exact:true}).click();
   await page.getByRole('searchbox',{name:'搜索轨迹'}).fill('outputneedle 299');
   await ledger.locator('[data-record-id="record-299"]').waitFor();
@@ -182,6 +189,7 @@ try {
   await page.mouse.move(box.x+box.width*.25,box.y+8);await page.mouse.down();
   await page.mouse.move(box.x+box.width*.65,box.y+8,{steps:6});await page.mouse.up();
   assert.ok(await page.locator('.trajectory-mark[data-dimmed="true"]').count()>0);
+  if(width<900)await page.getByRole('button',{name:'关闭轨迹详情',exact:true}).click();
   await page.getByRole('button',{name:'清除区间筛选',exact:true}).click();
   await page.locator('.trajectory-range').waitFor({state:'hidden'});
   await ledger.press('End');

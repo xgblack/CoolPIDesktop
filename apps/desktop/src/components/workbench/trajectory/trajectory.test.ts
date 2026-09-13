@@ -1,8 +1,23 @@
 import {describe,it,expect} from 'vitest';
-import {ledgerRows,timelineItems,overlapping,searchRecords,type TrajectoryRecord} from './trajectory-model';
+import {ledgerRows,timelineItems,overlapping,searchRecords,runtimeSystemPrompt,withSystemPrompt,type TrajectoryRecord} from './trajectory-model';
 import {mergeRecords,projectLive} from './use-trajectory';
 const record=(id:string,extra:Partial<TrajectoryRecord>={}):TrajectoryRecord=>({id,aliases:[],kind:'assistant',turn:1,step:1,name:id,status:'succeeded',content:'text',images:[],truncated:false,...extra});
 describe('DSH trajectory semantics',()=>{
+ it('prepends initial prompt outside the page, deduplicates when loaded, and distinguishes current state',()=>{
+  const initial=record('init',{kind:'system',content:'Historical'});
+  expect(withSystemPrompt([record('tail')],initial,null).map(r=>r.id)).toEqual(['init','tail']);
+  const all=withSystemPrompt([initial,record('tail')],initial,{state:{systemPrompt:'Current'}});
+  expect(all.map(r=>r.id)).toEqual(['init','runtime:system-prompt','tail']);
+  expect(all[0].content).toBe('Historical');expect(all[1].content).toBe('Current');
+  expect(withSystemPrompt([],null,null,true)).toEqual([]);
+  expect(withSystemPrompt([],null,null,false,'disk error')[0].content).toContain('disk error');
+ });
+ it('uses real runtime prompts without inventing absent or malformed content',()=>{
+  expect(runtimeSystemPrompt({state:{systemPrompt:['First','Second']}})?.content).toBe('First\n\nSecond');
+  expect(runtimeSystemPrompt({state:{systemPrompt:''}})?.content).toBe('');
+  expect(runtimeSystemPrompt({})).toBeNull();
+  expect(runtimeSystemPrompt({state:{systemPrompt:[{}]}})).toBeNull();
+ });
  it('keeps discontiguous turn and step headers unique for virtual layout',()=>{
   const records=[record('a'),record('context',{kind:'context',turn:null,step:null}),record('b'),record('c',{step:null}),record('d')];
   const rows=ledgerRows(records,new Set(),false,null,null);

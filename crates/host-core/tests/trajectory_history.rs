@@ -11,6 +11,34 @@ fn fixture(body: &str) -> (PathBuf, String) {
 }
 
 #[test]
+fn initial_prompt_is_available_outside_every_history_page_without_changing_cursors() {
+    let mut lines = vec![json!({"type":"session_init","id":"init","systemPrompt":"Historical prompt"}).to_string()];
+    for i in 0..65 { lines.push(json!({"type":"message","id":format!("u{i}"),"message":{"role":"user","content":"hello"}}).to_string()); }
+    let (p,id)=fixture(&lines.join("\n"));
+    let tail=host_core::trajectory_history::page(read(&p,&id).unwrap(),None,false).unwrap();
+    assert_eq!(tail.records.len(),50);
+    assert_eq!(tail.initial_system_prompt.as_ref().unwrap().id,"init");
+    assert!(!tail.records.iter().any(|r|r.id=="init"));
+    let older=host_core::trajectory_history::page(read(&p,&id).unwrap(),tail.next_cursor.as_deref(),false).unwrap();
+    assert_eq!(older.records[0].id,"init");
+    assert_eq!(older.initial_system_prompt.unwrap().content,"Historical prompt");
+}
+
+#[test]
+fn projects_session_init_system_prompt_and_system_messages() {
+    let (p, id) = fixture(&format!("{}\n{}\n",
+        json!({"type":"session_init","id":"init","systemPrompt":"Initial instructions"}),
+        json!({"type":"message","id":"sys","parentId":"init","message":{"role":"system","content":"Updated instructions"}}),
+    ));
+    let h = read(&p, &id).unwrap();
+    assert_eq!(h.records.len(), 2);
+    assert_eq!(h.records[0].kind, "system");
+    assert_eq!(h.records[0].content, "Initial instructions");
+    assert_eq!(h.records[1].kind, "system");
+    assert_eq!(h.records[1].content, "Updated instructions");
+}
+
+#[test]
 fn pairs_persisted_tool_start_without_extra_context_and_preserves_unknown_markers() {
     let (p, id) = fixture(&format!(
         "{}\n{}\n{}\n{}\n",

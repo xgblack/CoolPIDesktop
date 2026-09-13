@@ -23,7 +23,7 @@ export type ApprovalMode='always-ask'|'write'|'yolo';
 export interface TaskRecord{approvalMode?:ApprovalMode|null;id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
 export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
 export interface Message{role:string;content:unknown;timestamp?:number;toolCallId?:string}
-export type TrajectoryKind='user'|'assistant'|'tool'|'context'|'compaction';
+export type TrajectoryKind='user'|'assistant'|'tool'|'context'|'system'|'compaction';
 export type TrajectoryStatus='running'|'succeeded'|'failed'|'cancelled'|'interrupted'|'unknown';
 export interface TrajectoryRecord {
  id:string; aliases:string[]; kind:TrajectoryKind; turn:number|null; step:number|null;
@@ -34,7 +34,7 @@ export interface TrajectoryRecord {
  images:TrajectoryImage[]; truncated:boolean;
 }
 export interface TrajectoryImage {id:string;mime:string;label:string}
-export interface TrajectoryPage {afterCursor?:string|null;records:TrajectoryRecord[];nextCursor:string|null;totalRecords:number;revision:string;warnings:string[]}
+export interface TrajectoryPage {initialSystemPrompt?:TrajectoryRecord|null;afterCursor?:string|null;records:TrajectoryRecord[];nextCursor:string|null;totalRecords:number;revision:string;warnings:string[]}
 export interface TrajectoryImageData {mime:string;data:string}
 export interface ConfigModel { id:string; originalId?:string; name?:string; api?:string; contextWindow?:number; maxTokens?:number; reasoning?:boolean; thinking?:Record<string,unknown>; input?:string[]; cost?:Record<string,unknown> }
 export interface ModelProvider { id:string; baseUrl:string|null; api:string|null; auth:string|null; authHeader:boolean|null; credentialConfigured:boolean; models:ConfigModel[] }

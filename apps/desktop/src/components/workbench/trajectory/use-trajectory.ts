@@ -1,4 +1,5 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {withSystemPrompt} from './trajectory-model';
 import {trajectory,hostError} from '../../../host';
 import type {TaskSnapshot,TrajectoryRecord,TrajectoryPage} from '../../../../../../packages/host-contract/src';
 
@@ -55,6 +56,7 @@ export function useTrajectory(taskId:string,run?:TaskSnapshot){
  // throttled and only needed when an OMP message/tool has settled, not per text delta.
  const settled=run?.events.filter(e=>['message_end','tool_execution_end','auto_compaction_end'].includes(e.eventType)).at(-1)?.seq;
  useEffect(()=>{const timer=setTimeout(()=>void read('new'),350);return()=>clearTimeout(timer);},[read,run?.runId,run?.status,settled]);
- const records=useMemo(()=>projectLive(data.records,run?.trajectory??[]),[data.records,run?.trajectory]);
- return {...data,records,totalRecords:data.totalRecords+Math.max(0,records.length-data.records.length),loading,loadingOlder,error,hasMore:!!data.nextCursor,refresh:()=>read('tail'),loadOlder:()=>read('older')};
+ const liveRecords=useMemo(()=>projectLive(data.records,run?.trajectory??[]),[data.records,run?.trajectory]);
+ const records=useMemo(()=>withSystemPrompt(liveRecords,data.initialSystemPrompt,run?.runtime?.capabilities,loading,error?.message),[liveRecords,data.initialSystemPrompt,run?.runtime?.capabilities,loading,error]);
+ return {...data,records,totalRecords:data.totalRecords+Math.max(0,liveRecords.length-data.records.length)+records.filter(r=>r.id.startsWith('runtime:')||r.id==='missing:system-prompt').length,loading,loadingOlder,error,hasMore:!!data.nextCursor,refresh:()=>read('tail'),loadOlder:()=>read('older')};
 }

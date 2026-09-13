@@ -1,7 +1,22 @@
 import type { TrajectoryRecord } from '../../../../../../packages/host-contract/src';
 export type { TrajectoryRecord };
+export function runtimeSystemPrompt(capabilities:unknown):TrajectoryRecord|null {
+ const value=(capabilities as {state?:{systemPrompt?:unknown}}|undefined)?.state?.systemPrompt;
+ const content=typeof value==='string'?value:Array.isArray(value)&&value.every(v=>typeof v==='string')?value.join('\n\n'):null;
+ return content===null?null:{id:'runtime:system-prompt',aliases:[],kind:'system',turn:null,step:null,name:'当前运行时系统提示词',status:'unknown',content,images:[],truncated:false};
+}
 export const ROW_HEIGHT = 30;
-export const kindLabels: Record<TrajectoryRecord['kind'],string> = {user:'用户',assistant:'助手',tool:'工具',context:'上下文',compaction:'压缩'};
+/** Session context is available independently of the currently loaded history page. */
+export function withSystemPrompt(records:TrajectoryRecord[],initial:TrajectoryRecord|null|undefined,capabilities:unknown,loading=false,error?:string):TrajectoryRecord[] {
+ const historical=initial??records.find(r=>r.kind==='system');
+ const current=runtimeSystemPrompt(capabilities);
+ const prefix:TrajectoryRecord[]=[];
+ if(historical)prefix.push({...historical,name:'历史初始系统提示词',turn:null,step:null});
+ if(current)prefix.push(current);
+ if(!prefix.length&&!loading)prefix.push({id:'missing:system-prompt',aliases:[],kind:'system',turn:null,step:null,name:error?'系统提示词读取失败':'系统提示词未记录',status:'unknown',content:error?`读取历史失败：${error}。请刷新轨迹重试。`:'会话历史没有保存系统提示词，当前也没有可用的运行时提示词。恢复运行此任务后可查看当前提示词；无法还原未保存的历史提示词。',images:[],truncated:false});
+ return [...prefix,...records.filter(r=>r.id!==historical?.id)];
+}
+export const kindLabels: Record<TrajectoryRecord['kind'],string> = {user:'用户',assistant:'助手',tool:'工具',context:'上下文',system:'系统提示词',compaction:'压缩'};
 export const statusLabels: Record<TrajectoryRecord['status'],string> = {running:'运行中',succeeded:'完成',failed:'失败',cancelled:'已取消',interrupted:'已中断',unknown:'状态未记录'};
 export function stringify(value:unknown):string { return typeof value==='string'?value:value==null?'':JSON.stringify(value,null,2); }
 export function previewText(value:unknown):string {

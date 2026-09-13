@@ -12,15 +12,15 @@ describe('trajectory window requests',()=>{
  it('sends the older cursor and preserves the loaded tail',async()=>{
   vi.mocked(trajectory.read).mockResolvedValueOnce(page(['b','c'],'b')).mockResolvedValueOnce(page(['a']));
   const {result,unmount}=renderHook(()=>useTrajectory('task'));
-  await waitFor(()=>expect(result.current.records).toHaveLength(2));
+  await waitFor(()=>expect(result.current.records.filter(r=>r.kind!=='system')).toHaveLength(2));
   await act(()=>result.current.loadOlder());
-  expect(trajectory.read).toHaveBeenNthCalledWith(2,'task','b',false);expect(result.current.records.map(r=>r.id)).toEqual(['a','b','c']);unmount();
+  expect(trajectory.read).toHaveBeenNthCalledWith(2,'task','b',false);expect(result.current.records.filter(r=>r.kind!=='system').map(r=>r.id)).toEqual(['a','b','c']);unmount();
  });
  it('discards a late response after switching tasks',async()=>{
   let resolve!:(p:TrajectoryPage)=>void;
   vi.mocked(trajectory.read).mockImplementation(task=>task==='a'?new Promise(r=>{resolve=r;}):Promise.resolve(page(['B'])));
   const {result,rerender,unmount}=renderHook(({id})=>useTrajectory(id),{initialProps:{id:'a'}});
-  rerender({id:'b'});await waitFor(()=>expect(result.current.records[0]?.id).toBe('B'));
-  await act(async()=>{resolve(page(['A']));});expect(result.current.records.map(r=>r.id)).toEqual(['B']);unmount();
+  rerender({id:'b'});await waitFor(()=>expect(result.current.records.filter(r=>r.kind!=='system')[0]?.id).toBe('B'));
+  await act(async()=>{resolve(page(['A']));});expect(result.current.records.filter(r=>r.kind!=='system').map(r=>r.id)).toEqual(['B']);unmount();
  });
 });
