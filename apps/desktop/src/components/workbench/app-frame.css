@@ -46,7 +46,7 @@
 .project-folders>button { margin:8px; }
 .starter-actions { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:24px; }
 .starter-actions button { min-height:80px; white-space:normal; }
-.streaming-tail { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.625; }
+.streaming-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.7; }
 
 /* Transcript: quiet process disclosures, document-style answers. */
 .assistant-turn{padding:12px 0 24px;min-width:0}
@@ -71,6 +71,7 @@
 .activity-row[data-state=running] .activity-icon,.activity-wait .activity-icon{animation:activity-pulse 1.8s ease-in-out infinite}
 .activity-wait{display:flex;align-items:center;gap:8px;padding:12px 0;color:var(--muted-foreground);font-size:12px}
 .live-activities{padding:4px 0 12px}
+.live-turn{overflow-anchor:none}
 @keyframes activity-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 @media(prefers-reduced-motion:reduce){.activity-row[data-state=running] .activity-icon,.activity-wait .activity-icon{animation:none}}
 

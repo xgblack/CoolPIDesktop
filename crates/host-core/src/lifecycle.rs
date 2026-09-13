@@ -56,6 +56,7 @@ impl Workbench {
     }
     async fn runtime_command_locked(&self, id: &str) -> Result<RuntimeCommand> {
         let task = self.store.task(id).await?;
+        if let Some(level) = &task.thinking { self.validate_thinking(&task, level).await?; }
         if task.archived {
             return Err(HostError::new("task_archived", "请先恢复归档任务"));
         }
@@ -109,7 +110,7 @@ impl Workbench {
         if let Some(model) = model {
             arguments.extend(["--model".into(), model]);
         }
-        if let Some(thinking) = state["thinkingLevel"].as_str() {
+        if let Some(thinking) = task.thinking.as_deref().or_else(|| state["thinkingLevel"].as_str()) {
             arguments.extend(["--thinking".into(), thinking.into()]);
         }
         let app = std::env::current_exe().map_err(|e| HostError::new("executable_missing", e))?;

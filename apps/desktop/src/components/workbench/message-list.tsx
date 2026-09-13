@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState, memo, useMemo, type ReactNode } from 'react';
+import { Children, isValidElement, useLayoutEffect, useRef, useState, memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
@@ -90,12 +90,9 @@ const MessageContent=memo(function MessageContent({ message, results, onError }:
   })}</>;
 },(a,b)=>a.message===b.message&&a.results===b.results);
 
-function StreamingMarkdown({text,onError}:{text:string;onError:MessageListProps['onError']}){
- const [parsed,setParsed]=useState(text),latest=useRef(text);latest.current=text;
- useEffect(()=>{const timer=setInterval(()=>setParsed(latest.current),120);return()=>clearInterval(timer);},[]);
- const prefix=text.startsWith(parsed)?parsed:'';
- return <><Markdown text={prefix} onError={onError}/><span className="streaming-tail">{text.slice(prefix.length)}</span></>;
-}
+const StreamingAnswer=memo(function StreamingAnswer({text,complete,onError}:{text:string;complete:boolean;onError:MessageListProps['onError']}){
+ return complete?<Markdown text={text} onError={onError}/>:<div className="streaming-text">{text}</div>;
+},(a,b)=>a.text===b.text&&a.complete===b.complete);
 
 export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, startedAt, onFork, forkDisabled }: MessageListProps) {
   const viewport = useRef<HTMLDivElement>(null);
@@ -104,6 +101,10 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
   const [atBottom, setAtBottom] = useState(true);
   const normalized = query.trim().toLowerCase();
   const visibleMessages = normalized ? messages.filter(message => JSON.stringify(message.content).toLowerCase().includes(normalized)) : messages;
+  const lastUserIndex=messages.reduce((found,message,index)=>message.role==='user'?index:found,-1);
+  const latestAssistant=[...messages.slice(lastUserIndex+1)].reverse().find(message=>message.role==='assistant');
+  const persistedCurrentAnswer=!running&&!!latestAssistant;
+  const liveText=persistedCurrentAnswer?'':streamingText;
   const results=useMemo(()=>new Map(messages.filter(m=>m.toolCallId).map(m=>[m.toolCallId!,m])),[messages]);
   const calledIds=useMemo(()=>new Set(messages.flatMap(m=>Array.isArray(m.content)?m.content.filter(b=>b&&['toolCall','tool_use'].includes(b.type)).map(b=>b.id):[])),[messages]);
   const transcript=useMemo(()=>{
@@ -140,7 +141,7 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
       element.scrollTop += Math.max(0, element.scrollHeight - previous.current.height);
     }
     previous.current = { taskKey, first: messages[0], height: element.scrollHeight };
-  }, [taskKey, messages, streamingText, loading]);
+  }, [taskKey, messages, liveText, loading]);
   const jump = () => {
     if (viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
     bottom.current = true; setAtBottom(true);
@@ -151,17 +152,17 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
       <div className="message-column">
         {hasMore && <div className="conversation-search"><Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button></div>}
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
-        {!loading && messages.length === 0 && !streamingText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
+        {!loading && messages.length === 0 && !liveText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
         {transcript.map((item,index)=>item.user?<article key={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={`${taskKey}:${item.prompt?.timestamp??index}`} className="assistant-turn">
           {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>{turnMetadata(item.original,item.prompt).durationMs === undefined?`执行过程 · ${item.activity.length}项`:`已执行 · ${item.activity.length}项 · ${durationLabel(turnMetadata(item.original,item.prompt).durationMs!)}`}</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i}>{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><MessageContent message={message} onError={onError}/></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError}/>}</div>)}</div></details>}
           {item.answer.map((message,i)=><div key={i} className="assistant-body"><MessageContent message={message} onError={onError}/></div>)}
           <TurnFooter messages={item.original} answers={item.answer} user={item.prompt} onFork={onFork} forkDisabled={forkDisabled||running||loading} onError={onError}/>
         </section>)}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
-        {(running || streamingText) && <section className="live-turn" aria-label="当前执行轮次">
-          {running ? <RunningClock startedAt={startedAt} itemCount={tools.length}/> : <span className="text-xs text-muted-foreground">正在同步…</span>}
+        {(running || liveText) && <section className="live-turn" aria-label="当前执行轮次" aria-busy={running}>
+          {running ? <RunningClock startedAt={startedAt} itemCount={tools.length}/> : loading ? <span className="text-xs text-muted-foreground">正在同步…</span> : null}
           {running&&tools.length>0&&<details className="activity-group"><summary><span>执行详情</span><ArrowDown size={12}/></summary><div className="live-activities" aria-label="当前工具执行">{tools.map(tool=><ActivityRow key={tool.id} name={tool.name} preview={activitySummary(tool.args)} state={tool.status}><pre>{JSON.stringify({参数:tool.args,结果:tool.result},null,2)}</pre></ActivityRow>)}</div></details>}
-          {streamingText && <div className="assistant-body"><StreamingMarkdown text={streamingText} onError={onError}/></div>}
+          {liveText && <div className="assistant-body"><StreamingAnswer text={liveText} complete={!running} onError={onError}/></div>}
         </section>}
       </div>
     </div>

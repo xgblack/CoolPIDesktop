@@ -11,7 +11,7 @@ const matchesSent=(m:Message,text:string)=>m.role==='user'&&(messageText(m)===te
 
 export function useWorkbench(){
  const [ps,setProjects]=useState<Project[]>([]),[tasks,setTasks]=useState<TaskRecord[]>([]),[runs,setRuns]=useState<TaskSnapshot[]>([]);
- const [models,setModels]=useState<{id:string;provider:string;name?:string}[]>([]);
+ const [models,setModels]=useState<import('../../../../../packages/host-contract/src').DiscoveredModel[]>([]);
  const [projectId,setProjectId]=useState(''),[taskId,setTaskId]=useState('');
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
  const [historyError,setHistoryError]=useState<HostError|null>(null),[historyBusy,setHistoryBusy]=useState(false),[,render]=useState(0);

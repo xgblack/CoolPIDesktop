@@ -558,6 +558,60 @@ pub struct Verification {
     pub message: String,
     pub models: Vec<Value>,
 }
+
+pub(crate) const THINKING_LEVELS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+pub(crate) fn discovered_model(m: &Value) -> Value {
+    let reasoning = m.get("reasoning").and_then(Value::as_bool);
+    // CLI flattens levels into an array; RPC returns the model capability object.
+    // Only effort mode declares discrete selectable levels. Other modes stay unknown.
+    let thinking = &m["thinking"];
+    let raw_levels = thinking.as_array().or_else(|| {
+        (thinking["mode"] == "effort").then(|| thinking["efforts"].as_array()).flatten()
+    });
+    let levels: Vec<Value> = raw_levels
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|level| THINKING_LEVELS.contains(level))
+        .fold(Vec::new(), |mut levels, level| {
+            let value = Value::String(level.to_owned());
+            if !levels.contains(&value) { levels.push(value); }
+            levels
+        });
+    let support = match raw_levels {
+        Some(values) if !values.is_empty() && !levels.is_empty() => "supported",
+        Some(values) if values.is_empty() => "unsupported",
+        Some(_) => "unknown",
+        None => "unknown",
+    };
+    json!({
+        "id": m["id"],
+        "provider": m["provider"],
+        "name": m["name"],
+        "capability": {
+            "reasoning": reasoning,
+            "thinking": {
+                "support": support,
+                "levels": levels,
+                "source": "omp-runtime",
+                "unknownLevels": raw_levels.into_iter().flatten().filter(|v| v.as_str().is_none_or(|s| !THINKING_LEVELS.contains(&s))).cloned().collect::<Vec<_>>()
+            }
+        }
+    })
+}
+pub(crate) fn validate_thinking(model: &Value, level: &str) -> Result<()> {
+    let capability = &model["capability"];
+    if capability["thinking"]["support"] == "unknown" {
+        return Err(err("model_thinking_unknown", "推理强度能力未知，请使用 OMP 默认"));
+    }
+    if capability["reasoning"] == false || !THINKING_LEVELS.contains(&level)
+        || !capability["thinking"]["levels"].as_array().is_some_and(|levels| levels.iter().any(|v| v == level)) {
+        return Err(err("model_thinking_unavailable", "该模型不支持所选推理强度，请重新选择"));
+    }
+    Ok(())
+}
+
 // Do not forward OMP output: it can contain resolved headers, keys, URLs or echoed requests.
 async fn output(
     executable: &Path,
@@ -621,10 +675,7 @@ pub async fn discover(executable: &Path, cwd: &Path) -> Result<Verification> {
     let list = doc["models"]
         .as_array()
         .ok_or_else(|| err("config_load_failed", "OMP 模型列表格式无效"))?;
-    let models = list
-        .iter()
-        .map(|m| json!({"id":m["id"],"provider":m["provider"],"name":m["name"]}))
-        .collect();
+    let models = list.iter().map(discovered_model).collect();
     let (ok, out, errors) = output(executable, cwd, &["config".into(), "get".into(), "modelRoles".into(), "--json".into()]).await?;
     if !ok || !errors.is_empty() {
         return Err(err("config_load_failed", "无法读取 OMP 默认模型配置"));
@@ -730,6 +781,30 @@ pub async fn connect(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runtime_thinking_capabilities_are_not_inferred_from_reasoning() {
+        for (raw, support, levels) in [
+            (serde_json::json!({"reasoning":true,"thinking":["low","high","low","future"]}), "supported", serde_json::json!(["low","high"])),
+            (serde_json::json!({"reasoning":true,"thinking":[]}), "unsupported", serde_json::json!([])),
+            (serde_json::json!({"reasoning":true}), "unknown", serde_json::json!([])),
+            (serde_json::json!({"thinking":["future"]}), "unknown", serde_json::json!([])),
+            (serde_json::json!({"thinking":{}}), "unknown", serde_json::json!([])),
+            (serde_json::json!({"thinking":{"mode":"effort","efforts":["minimal","low","medium","high"]}}), "supported", serde_json::json!(["minimal","low","medium","high"])),
+            (serde_json::json!({"thinking":{"mode":"effort","efforts":[]}}), "unsupported", serde_json::json!([])),
+            (serde_json::json!({"thinking":{"mode":"effort","efforts":["future"]}}), "unknown", serde_json::json!([])),
+            (serde_json::json!({"thinking":{"mode":"effort","efforts":"medium"}}), "unknown", serde_json::json!([])),
+            (serde_json::json!({"thinking":{"mode":"future","efforts":["medium"]}}), "unknown", serde_json::json!([])),
+        ] {
+            let model = super::discovered_model(&raw);
+            assert_eq!(model["capability"]["thinking"]["support"], support);
+            assert_eq!(model["capability"]["thinking"]["levels"], levels);
+        }
+        let off = super::discovered_model(&serde_json::json!({"reasoning":true,"thinking":["off","low"]}));
+        assert!(super::validate_thinking(&off, "off").is_ok());
+        let no = super::discovered_model(&serde_json::json!({"reasoning":false,"thinking":["high"]}));
+        assert!(super::validate_thinking(&no, "high").is_err());
+    }
+
     use super::*;
     fn path() -> PathBuf {
         let root = std::env::temp_dir().join(format!("model-config-test-{}", uuid::Uuid::new_v4()));

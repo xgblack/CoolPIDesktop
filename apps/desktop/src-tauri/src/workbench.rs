@@ -524,6 +524,14 @@ async fn select_task_model(
     w.select_model(&task_id, &provider, &model_id).await
 }
 #[tauri::command]
+async fn task_thinking(w: State<'_, Workbench>, task_id: String) -> Result<Option<String>> {
+    w.store.task_thinking(&task_id).await
+}
+#[tauri::command]
+async fn set_task_thinking(w: State<'_, Workbench>, task_id: String, level: Option<String>) -> Result<()> {
+    w.select_thinking(&task_id, level).await
+}
+#[tauri::command]
 async fn observer_info(w: State<'_, Workbench>) -> Result<ObserverInfo> {
     w.runtime.observer_info().await
 }
@@ -707,6 +715,8 @@ pub fn run() {
             recover_worktrees,
             recover_session,
             select_task_model,
+            task_thinking,
+            set_task_thinking,
             observer_info
         ])
         .build(tauri::generate_context!())

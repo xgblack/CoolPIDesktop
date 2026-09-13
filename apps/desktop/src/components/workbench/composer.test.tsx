@@ -89,3 +89,52 @@ it('filters @ filenames and Enter selects the candidate without sending',async()
  expect(onDraft).toHaveBeenCalledWith('@composer.tsx ');
  expect(onReferences).toHaveBeenCalledWith([{rootIndex:0,path:'src/composer.tsx',name:'composer.tsx'}]);
 });
+
+it('uses only the selected model levels and leaves selection controlled on save failure',()=>{
+ const onThinking=vi.fn();
+ const models:NonNullable<import('./composer').ComposerProps['models']>=[
+  {provider:'p',id:'wide',capability:{reasoning:true,thinking:{support:'supported',levels:['low','high']}}},
+  {provider:'p',id:'narrow',capability:{reasoning:true,thinking:{support:'supported',levels:['low']}}},
+ ];
+ const {rerender}=render(<Composer {...base} models={models} modelValue="p/wide" thinking="high" onThinking={onThinking}/>);
+ const select=screen.getByRole('combobox',{name:'推理强度'}) as HTMLSelectElement;
+ expect(Array.from(select.options,o=>o.value)).toEqual(['','low','high']);
+ fireEvent.change(select,{target:{value:'low'}});
+ expect(onThinking).toHaveBeenCalledWith('low');
+ rerender(<Composer {...base} models={models} modelValue="p/wide" thinking="high" onThinking={onThinking}/>);
+ expect(select.value).toBe('high');
+ rerender(<Composer {...base} models={models} modelValue="p/narrow" onThinking={onThinking}/>);
+ expect(Array.from(select.options,o=>o.value)).toEqual(['','low']);
+ rerender(<Composer {...base} models={models} modelValue="p/narrow" onThinking={onThinking} thinkingDisabled/>);
+ expect(select.disabled).toBe(true);
+});
+
+it.each(['unsupported','unknown'] as const)('disables %s capability without fabricating levels',support=>{
+ render(<Composer {...base} models={[{provider:'p',id:'m',capability:{reasoning:true,thinking:{support,levels:[]}}}]} modelValue="p/m" onThinking={vi.fn()}/>);
+ const select=screen.getByRole('combobox',{name:'推理强度'}) as HTMLSelectElement;
+ expect(select.disabled).toBe(true);
+ expect(select.options.length).toBe(1);
+ expect(select.textContent).toContain(support==='unknown'?'能力未知':'不可调节');
+});
+
+it('hides stale levels while discovery fails or a model is unavailable',()=>{
+ const {rerender}=render(<Composer {...base} models={[]} modelValue="p/m" onThinking={vi.fn()} modelsLoading/>);
+ expect((screen.getByRole('combobox',{name:'推理强度'}) as HTMLSelectElement).disabled).toBe(true);
+ rerender(<Composer {...base} models={[]} modelValue="p/m" onThinking={vi.fn()} modelsError="加载失败"/>);
+ expect((screen.getByRole('combobox',{name:'推理强度'}) as HTMLSelectElement).options.length).toBe(1);
+});
+
+it('preserves medium when capability metadata disappears and recovers after the runtime snapshot',()=>{
+ const onThinking=vi.fn();
+ const models:NonNullable<import('./composer').ComposerProps['models']>=[{provider:'p',id:'m',capability:{reasoning:true,thinking:{support:'supported',levels:['minimal','low','medium','high']}}}];
+ const {rerender}=render(<Composer {...base} models={models} modelValue="p/m" thinking="medium" onThinking={onThinking}/>);
+ const select=screen.getByRole('combobox',{name:'推理强度'}) as HTMLSelectElement;
+ expect(select.selectedOptions[0].textContent).toBe('medium');
+ rerender(<Composer {...base} models={[{provider:'p',id:'m'}]} modelValue="p/m" thinking="medium" onThinking={onThinking} thinkingDisabled/>);
+ expect(select.value).toBe('medium');
+ expect(select.selectedOptions[0].textContent).toBe('medium · 推理能力未知');
+ expect(select.disabled).toBe(true);
+ rerender(<Composer {...base} models={models} modelValue="p/m" thinking="medium" onThinking={onThinking} thinkingDisabled/>);
+ expect(select.selectedOptions[0].textContent).toBe('medium');
+ expect(onThinking).not.toHaveBeenCalled();
+});

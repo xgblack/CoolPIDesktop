@@ -33,6 +33,8 @@ pub struct TaskRecord {
     pub session_file: Option<PathBuf>,
     pub model: Option<String>,
     pub approval_mode: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<String>,
     pub last_run: Option<TaskRun>,
 }
 
@@ -134,6 +136,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         session_file: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
         model: row.get(8)?,
         approval_mode: row.get(12)?,
+        thinking: row.get(13)?,
         last_run: row
             .get::<_, Option<String>>(9)?
             .map(|id| -> rusqlite::Result<TaskRun> {
@@ -147,7 +150,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
             .transpose()?,
     })
 }
-const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code,(SELECT NULLIF(value,'') FROM settings WHERE key='task_approval:'||t.id) FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
+const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code,(SELECT NULLIF(value,'') FROM settings WHERE key='task_approval:'||t.id),(SELECT value FROM settings WHERE key='task_thinking:'||t.id) FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
 
 impl Store {
     pub async fn open(path: PathBuf) -> Result<Self> {
@@ -611,9 +614,14 @@ impl Store {
 
     /// Persist an explicit, validated selection and its project preference atomically.
     pub async fn save_model_selection(&self, id: &str, model: String) -> Result<()> {
+        self.save_model_selection_with_thinking(id, model, false).await
+    }
+
+    pub async fn save_model_selection_with_thinking(&self, id: &str, model: String, clear_thinking: bool) -> Result<()> {
         let id = id.to_owned();
         self.access(move |c| {
             let tx = c.transaction().map_err(db)?;
+            if clear_thinking { tx.execute("DELETE FROM settings WHERE key=?1", [format!("task_thinking:{id}")]).map_err(db)?; }
             let project: String = tx.query_row("SELECT project_id FROM tasks WHERE id=?1", [&id], |r| r.get(0)).map_err(db)?;
             tx.execute("UPDATE tasks SET model=?2,updated_at=?3 WHERE id=?1", params![id,model,now()]).map_err(db)?;
             tx.execute("INSERT INTO settings VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -638,6 +646,23 @@ impl Store {
             Ok(())
         })
         .await
+    }
+
+    pub async fn task_thinking(&self, id: &str) -> Result<Option<String>> {
+        let key = format!("task_thinking:{id}");
+        self.setting(&key).await
+    }
+
+    pub async fn set_task_thinking(&self, id: &str, level: Option<String>) -> Result<()> {
+        self.task(id).await?;
+        if level.as_deref().is_some_and(|v| !crate::model_config::THINKING_LEVELS.contains(&v)) {
+            return Err(HostError::new("model_thinking_unavailable", "无效推理强度"));
+        }
+        let key = format!("task_thinking:{id}");
+        match level {
+            Some(value) => self.set_setting(&key, value).await,
+            None => self.access(move |c| { c.execute("DELETE FROM settings WHERE key=?1", [key]).map_err(db)?; Ok(()) }).await,
+        }
     }
     pub async fn session_version(&self, id: &str, version: Option<String>) -> Result<()> {
         let id = id.to_owned();

@@ -169,17 +169,19 @@ impl Workbench {
                 ));
             }
         }
+        if let Some(level) = &task.thinking { self.validate_thinking(&task, level).await?; }
         let run_id = uuid::Uuid::new_v4().to_string();
         let options = LaunchOptions {
             approval_mode: task.approval_mode.clone(),
             run_id: Some(run_id.clone()),
             root: roots[0].clone(),
             additional: roots[1..].to_vec(),
-            model: if task.session_file.is_none() {
+            model: if task.session_file.is_none() || task.thinking.is_some() {
                 task.model.clone()
             } else {
                 None
             },
+            thinking: task.thinking.clone(),
             session_dir: Some(session_dir),
             session_file: task.session_file.clone(),
             expected_session: task.session_id.clone(),
@@ -551,12 +553,47 @@ impl Workbench {
         git::diff(&root, root_index, path, staged, untracked).await
     }
 
+    /// Thinking is a launch option: an existing process must be stopped first.
+    pub async fn select_thinking(&self, id: &str, level: Option<String>) -> Result<()> {
+        let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        let task = self.store.task(id).await?;
+        if task.archived { return Err(HostError::new("task_archived", "请先恢复归档任务")); }
+        if self.runtime.snapshot(id).await.is_ok_and(|s| matches!(s.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")) {
+            return Err(HostError::new("task_running", "请先停止任务进程，再修改推理强度；下次启动生效"));
+        }
+        if let Some(value) = &level { self.validate_thinking(&task, value).await?; }
+        self.store.set_task_thinking(id, level).await
+    }
+
+    pub(crate) async fn validate_thinking(&self, task: &TaskRecord, level: &str) -> Result<()> {
+        let roots = self.store.validate_task_roots(&task.id).await?;
+        let executable = self.store.executable().await?;
+        let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
+        crate::probe(&path).await?;
+        let available = crate::model_config::discover(&path, &roots[0]).await?;
+        let model = available.models.iter().find(|m| task.model.as_deref() == Some(format!("{}/{}", m["provider"].as_str().unwrap_or(""), m["id"].as_str().unwrap_or("")).as_str()))
+            .ok_or_else(|| HostError::new("model_unavailable", "请先选择可用模型"))?;
+        crate::model_config::validate_thinking(model, level)
+    }
+
     pub async fn select_model(&self, id: &str, provider: &str, model_id: &str) -> Result<Value> {
         let _guard = self.gate.lock().await;
         self.check_handoff(id).await?;
         let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
             matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
         });
+        let target = if runtime_alive {
+            let snapshot = self.runtime.snapshot(id).await?;
+            snapshot.runtime.capabilities["models"].as_array().into_iter().flatten().find(|m| m["provider"] == provider && m["id"] == model_id).cloned()
+        } else {
+            let roots = self.store.validate_task_roots(id).await?;
+            let executable = self.store.executable().await?;
+            let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
+            crate::probe(&path).await?;
+            crate::model_config::discover(&path, &roots[0]).await?.models.into_iter().find(|m| m["provider"] == provider && m["id"] == model_id)
+        }.ok_or_else(|| HostError::new("model_unavailable", "所选模型已不可用"))?;
+        let clear_thinking = self.store.task_thinking(id).await?.is_some_and(|level| crate::model_config::validate_thinking(&target, &level).is_err());
         if runtime_alive {
             self.runtime
                 .query(
@@ -572,18 +609,10 @@ impl Workbench {
                     "OMP model selection mismatch",
                 ));
             }
-            self.store.save_model_selection(id, format!("{provider}/{model_id}")).await?;
+            self.store.save_model_selection_with_thinking(id, format!("{provider}/{model_id}"), clear_thinking).await?;
             return Ok(state);
         }
-        let task = self.store.task(id).await?;
-        let executable = self.store.executable().await?;
-        let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
-        crate::probe(&path).await?;
-        let available = crate::model_config::discover(&path, &task.roots[0]).await?;
-        if !available.models.iter().any(|m| m["provider"] == provider && m["id"] == model_id) {
-            return Err(HostError::new("model_unavailable", "所选模型已不可用"));
-        }
-        self.store.save_model_selection(id, format!("{provider}/{model_id}")).await?;
+        self.store.save_model_selection_with_thinking(id, format!("{provider}/{model_id}"), clear_thinking).await?;
         Ok(json!({"model":{"provider":provider,"id":model_id}}))
     }
     pub async fn recover_session(&self, id: &str, confirmed: bool) -> Result<String> {

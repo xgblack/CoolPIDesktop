@@ -258,6 +258,8 @@ pub struct LaunchOptions {
     pub root: PathBuf,
     pub additional: Vec<PathBuf>,
     pub model: Option<String>,
+    /// Explicit OMP thinking level. None keeps the runtime default.
+    pub thinking: Option<String>,
     pub session_dir: Option<PathBuf>,
     pub session_file: Option<PathBuf>,
     pub expected_session: Option<String>,
@@ -572,6 +574,12 @@ impl Wire {
         if let Some(model) = &options.model {
             command.arg("--model").arg(model);
         }
+        if let Some(thinking) = &options.thinking {
+            if !crate::model_config::THINKING_LEVELS.contains(&thinking.as_str()) {
+                return Err(HostError::new("model_thinking_unavailable", "Invalid thinking level"));
+            }
+            command.arg("--thinking").arg(thinking);
+        }
         let mut child = command
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -792,7 +800,7 @@ impl Wire {
         }
         .into();
         info.protocol = Some(2);
-        info.capabilities = json!({"state":state,"models":models["models"],"commands":commands["commands"],"maxFrameBytes":self.max_frame,"maxReassembledFrameBytes":ready["maxReassembledFrameBytes"].as_u64().unwrap().min(MAX_LOGICAL as u64)});
+        info.capabilities = json!({"state":state,"models":models["models"].as_array().unwrap().iter().map(crate::model_config::discovered_model).collect::<Vec<_>>(),"commands":commands["commands"],"maxFrameBytes":self.max_frame,"maxReassembledFrameBytes":ready["maxReassembledFrameBytes"].as_u64().unwrap().min(MAX_LOGICAL as u64)});
         Ok(info)
     }
     async fn close(&mut self) -> Result<()> {

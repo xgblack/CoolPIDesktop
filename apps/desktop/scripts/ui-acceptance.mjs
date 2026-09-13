@@ -37,7 +37,7 @@ try {
     case 'open_in_app_icon':return 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" rx="5" fill="#2585e6"/><path d="M6 8L10 12L6 16M13 16H18" fill="none" stroke="white" stroke-width="2"/></svg>');
     case 'open_in_app':if(window.__openFails)throw{code:'open_app_failed',message:'应用未接受打开请求，请检查安装状态后重试'};await new Promise(resolve=>setTimeout(resolve,window.__openDelay??0));return null;
     case 'observer_info':return{url:'ws://127.0.0.1:9999',token:'test'};case 'task_snapshot':return structuredClone(runs[args.taskId]);case 'list_projects':return[project];case 'task_records':return structuredClone(taskRecords);case 'list_tasks':return Object.values(runs);
-    case 'create_task':{const created={...task('created'),title:args.title,sessionId:null,sessionFile:null,model:args.model};taskRecords.push(created);runs.created=snapshot('created');return structuredClone(created);}
+    case 'create_task':{if(window.__holdCreate)await new Promise(resolve=>{window.__releaseCreate=resolve;});const created={...task('created'),title:args.title,sessionId:null,sessionFile:null,model:args.model};taskRecords.push(created);runs.created=snapshot('created');return structuredClone(created);}
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
     case 'runtime_tasks':return Object.values(runtimeTasks).map(info=>({...info,status:runs[info.taskId]?.status??info.status}));
     case 'runtime_focus':if(args.taskId&&!runtimeTasks[args.taskId]){runs[args.taskId]??=snapshot(args.taskId);runtimeTasks[args.taskId]=runtimeInfo(args.taskId);}return null;
@@ -111,9 +111,18 @@ try {
   await page.getByRole('menuitem',{name:'another-model · test'}).click();
   await page.getByRole('button',{name:'审批模式',exact:true}).click();
   await page.getByRole('menuitemradio',{name:'执行需审批',exact:true}).click();
+  await page.evaluate(()=>{window.__holdCreate=true;});
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('新会话使用选择的真实模型');
   await page.getByRole('textbox',{name:'消息',exact:true}).press('Enter');
-  await page.getByRole('region',{name:'对话消息'}).getByText('新会话使用选择的真实模型',{exact:true}).waitFor({timeout:600});
+  const pendingConversation=page.getByRole('region',{name:'对话消息'});
+  await pendingConversation.getByText('新会话使用选择的真实模型',{exact:true}).waitFor({timeout:600});
+  assert.equal(await page.locator('.workspace-empty').count(),0);
+  assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'');
+  assert.equal(await page.locator('.task-header h1').innerText(),'新会话使用选择的真实模型');
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-new-conversation-pending.png'});
+  await page.evaluate(()=>{window.__holdCreate=false;window.__releaseCreate?.();});
+  await page.getByRole('button',{name:'任务运行操作',exact:true}).waitFor();
+  await page.waitForFunction(()=>window.__calls.some(x=>x.cmd==='set_task_approval'&&x.args.taskId==='created'));
   assert.equal(await page.evaluate(()=>window.__calls.find(x=>x.cmd==='create_task')?.args.model),'test/another-model');
   assert.equal(await page.evaluate(()=>window.__calls.find(x=>x.cmd==='set_task_approval'&&x.args.taskId==='created')?.args.mode),'write');
   await openSidebar();
@@ -172,8 +181,13 @@ try {
   await page.getByText('发送后应立即可见的用户消息',{exact:true}).waitFor({timeout:600});
   assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'');
   await page.getByText(/实时增量1/).first().waitFor();
+  await page.evaluate(()=>{window.__streamingTextNode=document.querySelector('.streaming-text');});
+  await page.getByText(/实时增量5/).first().waitFor();
+  assert.equal(await page.evaluate(()=>document.querySelector('.streaming-text')===window.__streamingTextNode),true);
   await page.getByText(/实时增量10/).first().waitFor();
   await page.getByText('正在生成',{exact:false}).waitFor({state:'hidden'});
+  assert.equal(await page.locator('.streaming-text').count(),0);
+  assert.equal(await page.getByText(/实时增量10/).count(),1);
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('切换审批时保留草稿');
   await page.getByRole('button',{name:'审批模式',exact:true}).click();
   await page.getByRole('menuitemradio',{name:'写入与执行需审批',exact:true}).click();
@@ -191,7 +205,7 @@ try {
   }
   await page.getByRole('region',{name:'对话消息'}).evaluate(e=>{e.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-  assert.equal(await page.locator('img').count(),0);
+  assert.equal(await page.getByRole('region',{name:'对话消息'}).locator('img').count(),0);
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'.png'});
   await page.locator('.activity-group > summary').first().click();
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-activity.png'});

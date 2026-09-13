@@ -4,7 +4,7 @@ import {Button} from '@/components/ui/button';
 import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem,DropdownMenuSeparator} from '@/components/ui/dropdown-menu';
 import {IconButton} from './shared';
 import type {TaskRecord,TaskSnapshot} from '../../../../../packages/host-contract/src';
-export type Capabilities={models?:{id:string;provider:string;name?:string}[];state?:{model?:{id:string;provider:string}}};
+export type Capabilities={models?:import('../../../../../packages/host-contract/src').DiscoveredModel[];state?:{model?:{id:string;provider:string}}};
 export function TaskHeader({task,run,busy,onSidebar,onStop,onRestart,onAbort,onRecovery,sidebarVisible,onDetails,detailsOpen,onTrajectory,trajectoryOpen,onRuntime,historyControls,onCopySessionId,onDownloadSession,exporting=false}:{task:TaskRecord;run?:TaskSnapshot;busy:boolean;onSidebar:()=>void;onStop:()=>void;onRestart:()=>void;onAbort:()=>void;onRecovery:()=>void;sidebarVisible:boolean;onDetails?:()=>void;detailsOpen?:boolean;onTrajectory?:()=>void;trajectoryOpen?:boolean;onRuntime?:()=>void;onCopySessionId:()=>void;onDownloadSession:()=>void;exporting?:boolean;historyControls?:import('react').ReactNode}){
  const active=!!run&&['ready','idle','running','interrupted','starting'].includes(run.status);
  return <header className="task-header">

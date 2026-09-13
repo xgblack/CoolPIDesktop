@@ -44,6 +44,40 @@ describe('message rendering', () => {
     expect(region.scrollTop).toBe(1200);
   });
 
+  it('keeps one stable text node while streaming and parses markdown only after completion', () => {
+    const {container,rerender}=render(<MessageList {...base} streamingText="## 实时" running/>);
+    const streaming=container.querySelector('.streaming-text');
+    expect(streaming?.textContent).toBe('## 实时');
+    expect(container.querySelector('h2')).toBeNull();
+    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running/>);
+    expect(container.querySelector('.streaming-text')).toBe(streaming);
+    expect(container.querySelector('h2')).toBeNull();
+    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running={false}/>);
+    expect(container.querySelector('.streaming-text')).toBeNull();
+    expect(screen.getByRole('heading',{name:'实时'})).toBeTruthy();
+  });
+
+  it('keeps the completed stream visible until persisted history takes over', () => {
+    const text='不会在历史同步时闪烁';
+    const {rerender}=render(<MessageList {...base} streamingText={text} running={false} startedAt={1000}/>);
+    expect(screen.getByText(text)).toBeTruthy();
+    rerender(<MessageList {...base} streamingText={text} running={false} startedAt={1000} messages={[
+      {role:'user',content:'问题',timestamp:1000},{role:'assistant',content:text,timestamp:1200},
+    ]}/>);
+    expect(screen.getAllByText(text)).toHaveLength(1);
+    expect(screen.queryByLabelText('当前执行轮次')).toBeNull();
+  });
+
+  it('hands a tool-split stream to persisted assistant messages without duplicating it', () => {
+    const {rerender}=render(<MessageList {...base} streamingText="准备检查最终结论" running/>);
+    rerender(<MessageList {...base} streamingText="准备检查最终结论" running={false} messages={[
+      {role:'user',content:'检查代码'},{role:'assistant',content:'准备检查'},
+      {role:'toolResult',content:'结果'},{role:'assistant',content:'最终结论'},
+    ]}/>);
+    expect(screen.queryByLabelText('当前执行轮次')).toBeNull();
+    expect(screen.getAllByText(/准备检查|最终结论/)).toHaveLength(2);
+  });
+
   it('reports clipboard rejection and disables pagination while generation is active', async () => {
     const failure = new Error('Clipboard permission denied');
     const onError = vi.fn();

@@ -20,7 +20,7 @@ export interface TerminalSnapshot{id:string;taskId:string;output:string;start:nu
 export interface ObserverInfo{url:string;token:string}
 export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
 export type ApprovalMode='always-ask'|'write'|'yolo';
-export interface TaskRecord{approvalMode?:ApprovalMode|null;id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
+export interface TaskRecord{thinking?:ThinkingLevel|null;approvalMode?:ApprovalMode|null;id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
 export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
 export interface MessageUsage extends Partial<Record<'input'|'output'|'reasoning'|'cacheRead'|'cacheWrite'|'inputTokens'|'outputTokens'|'reasoningTokens'|'cacheReadTokens'|'cacheWriteTokens'|'totalTokens',number>> {cost?:number|{total?:number}|null}
 export interface Message{role:string;content:unknown;timestamp?:number;completedAt?:number;duration?:number;ttft?:number;stopReason?:string;usage?:MessageUsage;toolCallId?:string}
@@ -42,7 +42,14 @@ export interface ModelProvider { id:string; baseUrl:string|null; api:string|null
 export interface ModelConfig {path:string;exists:boolean;revision:string;providers:ModelProvider[]}
 export interface ModelEdit {revision:string;originalId:string|null;provider:ModelProvider;credentialAction:'keep'|'replace'|'clear';credential:string|null;deleted:boolean}
 export interface ModelCatalog {version:string;source:string;cached:boolean;models:(ConfigModel&{provider:string;baseUrl:string})[]}
-export interface ModelVerification {defaultModel?:string|null;projectModel?:string|null;stage:'loaded'|'connected';message:string;models:{id:string;provider:string;name?:string}[]}
+export type ThinkingLevel='off'|'minimal'|'low'|'medium'|'high'|'xhigh'|'max';
+export type CapabilitySource='omp-runtime'|'catalog'|'config'|'unknown';
+export type ThinkingSupport='supported'|'unsupported'|'unknown';
+export interface ModelThinkingCapability {support:ThinkingSupport;levels:ThinkingLevel[];source:CapabilitySource;defaultLevel?:ThinkingLevel|null;unknownLevels?:unknown[]}
+export interface ModelCapability {reasoning:boolean|null;thinking:ModelThinkingCapability}
+// Missing capability is treated as unknown for older snapshots. Host discovery always supplies it.
+export interface DiscoveredModel {id:string;provider:string;name?:string;capability?:ModelCapability}
+export interface ModelVerification {defaultModel?:string|null;projectModel?:string|null;stage:'loaded'|'connected';message:string;models:DiscoveredModel[]}
 
 export interface RuntimeTaskInfo {
  reason?:string|null;
