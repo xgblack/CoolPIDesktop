@@ -1,11 +1,18 @@
 import {useEffect,useState} from 'react';
 import {Tabs} from 'radix-ui';
-import {Copy,X} from 'lucide-react';
+import {Check,Copy,X} from 'lucide-react';
 import {trajectory,hostError} from '../../../host';
 import {Markdown} from '../message-list';
 import {durationLabel,kindLabels,statusLabels,stringify,type TrajectoryRecord} from './trajectory-model';
 import type {TrajectoryImageData} from '../../../../../../packages/host-contract/src';
 export type ImageCache=Map<string,Promise<TrajectoryImageData>>;
+function CopyButton({text,label,className,disabled,onError}:{text:string;label:string;className:string;disabled?:boolean;onError:(e:unknown)=>void}){
+ const [copied,setCopied]=useState(0);
+ useEffect(()=>{if(!copied)return;const timer=setTimeout(()=>setCopied(0),2000);return()=>clearTimeout(timer);},[copied]);
+ const copy=async()=>{try{await navigator.clipboard.writeText(text);setCopied(value=>value+1);}catch(error){setCopied(0);onError(error);}};
+ return <button type="button" className={className} aria-label={copied?`${label}：已复制`:label} title={copied?'已复制':label} disabled={disabled} onClick={()=>void copy()}>{copied?<Check size={14} aria-hidden="true"/>:<Copy size={14} aria-hidden="true"/>}{copied>0&&<span className="trajectory-copy-feedback" role="status">已复制</span>}</button>;
+}
+
 function Image({taskId,record,id,label,cache}:{taskId:string;record:string;id:string;label:string;cache:ImageCache}){
  const [src,setSrc]=useState(''),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
  useEffect(()=>{let disposed=false;setError('');setSrc('');const key=`${taskId}:${record}:${id}`;let request=cache.get(key);if(!request){request=trajectory.image(taskId,record,id);cache.set(key,request);}
@@ -30,11 +37,11 @@ export function TrajectoryDetails({taskId,record,capabilities,cache,onError,onCl
  <Tabs.Content value="overview">{record.kind!=='system'&&metadata(entries.filter(([k])=>!['开始','结束','耗时','TTFT','计时来源'].includes(k)))}
  {record.truncated&&<p role="status">显示内容已截断，完整内容仍保存在 OMP 会话中。</p>}
  {record.kind==='system'?<p>{record.id==='runtime:system-prompt'?'来源：OMP 最近一次运行时状态，不代表历史请求的提示词快照。':record.id==='missing:system-prompt'?'没有可展示的系统提示词。':'来源：OMP 会话保存的系统提示词。'}</p>:payload}
- <h4>{record.kind==='system'?'系统提示词':'内容'}</h4>{record.kind==='system'?readable:blocks.map((b,i)=>b.type==='thinking'||b.type==='reasoning'?<details key={i}><summary>思考</summary><Markdown text={b.thinking??b.text??''} onError={onError}/></details>:typeof b.text==='string'?<Markdown key={i} text={b.text} onError={onError}/>:b.type==='image'?null:<pre key={i}>{stringify(b)}</pre>)}
+ <h4 className={record.kind==='system'?'trajectory-prompt-heading':undefined}>{record.kind==='system'?<>系统提示词<CopyButton key={`${taskId}:${record.id}:prompt`} text={promptText} label="复制原始系统提示词" className="trajectory-record-copy trajectory-prompt-copy" disabled={!promptText||record.id==='missing:system-prompt'} onError={onError}/></>:'内容'}</h4>{record.kind==='system'?readable:blocks.map((b,i)=>b.type==='thinking'||b.type==='reasoning'?<details key={i}><summary>思考</summary><Markdown text={b.thinking??b.text??''} onError={onError}/></details>:typeof b.text==='string'?<Markdown key={i} text={b.text} onError={onError}/>:b.type==='image'?null:<pre key={i}>{stringify(b)}</pre>)}
  {!blocks.length&&record.kind!=='system'&&<pre>{stringify(content)||'未记录'}</pre>}
  {record.images.map(img=><Image key={img.id} taskId={taskId} record={record.id} id={img.id} label={img.label} cache={cache}/>)}
  {record.error&&<pre role="alert" className="trajectory-error">{record.error}</pre>}
- <details><summary>查看记录 JSON</summary><div className="trajectory-record-json"><button type="button" className="trajectory-record-copy" aria-label="复制记录" title="复制记录" onClick={()=>void navigator.clipboard.writeText(stringify(record)).catch(onError)}><Copy size={14} aria-hidden="true"/></button><pre>{stringify(record)}</pre></div></details></Tabs.Content>
+ <details><summary>查看记录 JSON</summary><div className="trajectory-record-json"><CopyButton key={`${taskId}:${record.id}:json`} text={stringify(record)} label="复制记录" className="trajectory-record-copy" onError={onError}/><pre>{stringify(record)}</pre></div></details></Tabs.Content>
  <Tabs.Content value="input"><pre>{stringify(record.input)}</pre></Tabs.Content>
  <Tabs.Content value="output"><pre>{stringify(record.output)}</pre>{record.images.map(img=><Image key={img.id} taskId={taskId} record={record.id} id={img.id} label={img.label} cache={cache}/>)}{record.error&&<pre role="alert">{record.error}</pre>}</Tabs.Content>
  <Tabs.Content value="schema">{schema?<><p>当前 OMP 运行时定义（非历史调用快照）</p><h4>{schema.name}</h4><p>{schema.description}</p><pre>{stringify(schema.parameters)}</pre></>:<p>此记录没有可用的工具 Schema；OMP 历史会话未保存工具定义。</p>}</Tabs.Content>

@@ -11,9 +11,9 @@ try {
   const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR:',e.message);});page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
   await page.route('**/favicon.ico',route=>route.fulfill({status:204}));
   await page.addInitScript(()=>{
-   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedText=text;}}});
+   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(window.__clipboardFails)throw new Error('clipboard denied');window.__copiedText=text;}}});
    const project={id:'p',name:'长中文项目 · OMP 工作台界面改造与回归验证',roots:['/Users/developer/workspaces/长路径项目/客户端工作台与模型配置预置上下文目录','/tmp/additional-root'],archived:false,trusted:true};
-   const task=id=>({id,projectId:'p',title:id==='a'?'审查工作台界面：长中文标题、代码与工具执行输出':'第二个任务 · 草稿和审批隔离',roots:project.roots,pinned:id==='a',archived:false,sessionId:id,sessionFile:'/tmp/'+id,model:'test/qwen3.7-flash'});
+   const task=id=>({id,projectId:'p',title:id==='a'?'审查工作台界面：长中文标题、代码与工具执行输出':'第二个任务 · 草稿和审批隔离',roots:project.roots,pinned:id==='a',archived:false,sessionId:`omp-${id}`,sessionFile:'/tmp/'+id,model:'test/qwen3.7-flash'});
    const taskRecords=[task('a'),task('b')];
    const runs={},runtimeTasks={};let connection;const extra={};
    const runtimeInfo=id=>({taskId:id,runId:id+'-run',status:runs[id]?.status??'ready',owner:'desktop',pid:id==='a'?41820:41821,startedAt:Date.now()-45000,idleSince:null,keepAlive:false,autoStartSuppressed:false,executable:'/opt/homebrew/bin/omp',version:'18.1.15',error:null});
@@ -40,6 +40,7 @@ try {
     case 'runtime_keep_alive':runtimeTasks[args.taskId].keepAlive=args.keepAlive;return null;
     case 'runtime_release_idle':return [];
     case 'runtime_action':{const id=args.taskId;runtimeTasks[id]??=runtimeInfo(id);if(args.action==='stop'){runtimeTasks[id].pid=null;runtimeTasks[id].owner='none';runtimeTasks[id].autoStartSuppressed=true;runs[id].status='stopped';}else{runs[id]??=snapshot(id);runs[id].status='ready';runtimeTasks[id]=runtimeInfo(id);}return runtimeTasks[id];}
+    case 'download_task_session':if(window.__exportResult==='error')throw{code:'session_export_failed',message:'会话资源缺失，无法完整导出'};return window.__exportResult==='cancel'?null:'/tmp/omp-session-'+args.taskId+'.zip';
     case 'runtime_command':return{command:"'/Applications/Cool PI Desktop.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
     case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
     case 'search_task_files':case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_roots':return[];case 'task_attachments':return[];
@@ -85,6 +86,39 @@ try {
   await openSidebar();
   await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.__calls.some(x=>x.cmd==='continue_task'&&x.args.taskId==='a')),false);
+
+  const headerMenu=()=>page.getByRole('button',{name:'任务运行操作',exact:true}).click();
+  await headerMenu();
+  await page.getByRole('menuitem',{name:'复制会话 ID',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.__copiedText),'omp-a');
+  await headerMenu();
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-session-menu.png'});
+  await page.getByRole('menuitem',{name:'下载会话 Session',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'会话已保存至 /tmp/omp-session-a.zip'}).waitFor();
+  assert.equal(await page.evaluate(()=>window.__calls.filter(x=>x.cmd==='download_task_session').at(-1)?.args.taskId),'a');
+  await page.evaluate(()=>{window.__exportResult='cancel';});
+  await headerMenu();await page.getByRole('menuitem',{name:'下载会话 Session',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'已取消保存会话'}).waitFor();
+  await page.evaluate(()=>{window.__exportResult='error';});
+  await headerMenu();await page.getByRole('menuitem',{name:'下载会话 Session',exact:true}).click();
+  await page.getByText('会话资源缺失，无法完整导出',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.__exportResult=undefined;window.__clipboardFails=true;});
+  await headerMenu();await page.getByRole('menuitem',{name:'复制会话 ID',exact:true}).click();
+  await page.getByText('剪贴板不可用，请手动复制会话 ID。',{exact:true}).waitFor();
+  await page.getByText('omp-a',{exact:true}).waitFor();
+  await page.evaluate(()=>{window.__clipboardFails=false;});
+  await openSidebar();
+  await page.getByRole('button',{name:'第二个任务 · 草稿和审批隔离的操作',exact:true}).click();
+  await page.getByRole('menuitem',{name:'复制会话 ID',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.__copiedText),'omp-b');
+  assert.equal(await page.getByText('剪贴板不可用，请手动复制会话 ID。',{exact:true}).count(),0);
+  if(width<1024)await page.keyboard.press('Escape');
+  assert.match(await page.locator('.task-header h1').innerText(),/审查工作台界面/);
+  await openSidebar();
+  await page.getByRole('button',{name:'新会话使用选择的真实模型的操作',exact:true}).click();
+  assert.equal(await page.getByRole('menuitem',{name:'复制会话 ID',exact:true}).getAttribute('aria-disabled'),'true');
+  await page.keyboard.press('Escape');
+  if(width<1024)await page.keyboard.press('Escape');
 
   await page.locator('.activity-group > summary').first().click();
   await page.getByText('同一项目下，每个任务保留独立的',{exact:false}).waitFor();

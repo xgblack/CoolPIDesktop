@@ -1,8 +1,8 @@
 import {useEffect,useRef,useState} from 'react';
 import {AppFrame} from '@/components/workbench/app-frame';
 import {FolderOpen,Menu,PanelRight,Plus,Search,RefreshCw} from 'lucide-react';
-import {host,hostError,projects,records} from './host';
-import type {ApprovalMode,TaskRecord} from '../../../packages/host-contract/src';
+import {host,hostError,projects,records,downloadSession} from './host';
+import type {ApprovalMode,TaskRecord,HostError} from '../../../packages/host-contract/src';
 import {Button} from '@/components/ui/button';
 import {TooltipProvider} from '@/components/ui/tooltip';
 import {Sheet,SheetContent,SheetTitle,SheetDescription} from '@/components/ui/sheet';
@@ -24,6 +24,22 @@ import './style.css';
 
 export function App(){
  const w=useWorkbench(),theme=useTheme();
+ const [sessionError,setSessionError]=useState<HostError|null>(null);
+ const [sessionNotice,setSessionNotice]=useState(''),[exporting,setExporting]=useState<string|null>(null);
+ const exportPending=useRef(false);
+ const copySessionId=async(target:TaskRecord)=>{
+  setSessionNotice('');setSessionError(null);
+  if(!target.sessionId)return;
+  try{await navigator.clipboard.writeText(target.sessionId);setSessionNotice(`已复制「${target.title}」的会话 ID`);}
+  catch{setSessionError({code:'clipboard_failed',message:'剪贴板不可用，请手动复制会话 ID。',suggestion:target.sessionId});}
+ };
+ const exportSession=async(target:TaskRecord)=>{
+  if(exportPending.current)return;
+  exportPending.current=true;setSessionError(null);setExporting(target.id);setSessionNotice(`正在准备「${target.title}」的会话归档…`);
+  try{const path=await downloadSession(target.id);setSessionNotice(path?`会话已保存至 ${path}`:'已取消保存会话');}
+  catch(e){setSessionNotice('');setSessionError(hostError(e));}
+  finally{exportPending.current=false;setExporting(null);}
+ };
  const runtime=useTaskRuntime(w.task?.archived?null:w.taskId||null);
  const [search,setSearch]=useState({taskId:'',query:''});
  const query=search.taskId===w.taskId?search.query:'';
@@ -54,15 +70,15 @@ export function App(){
  const capabilities=run?.runtime?.capabilities as Capabilities|undefined;
  const ready=!external&&!!run&&['ready','idle','interrupted'].includes(run.status),running=!external&&run?.status==='running';
  const key=(task?.id??'')+':'+(run?.runId??'');
- const side=<ProjectSidebar runtimeTasks={runtime.tasks} onRuntime={openRuntime} onRuntimeManagement={()=>openSettings('runtime')} projects={w.projects} tasks={w.tasks} runs={w.runs} projectId={w.projectId} taskId={w.taskId} loading={w.loading} busy={w.busy} showArchived={archived} onArchived={setArchived}
+ const side=<ProjectSidebar onCopySessionId={t=>void copySessionId(t)} runtimeTasks={runtime.tasks} onRuntime={openRuntime} onRuntimeManagement={()=>openSettings('runtime')} projects={w.projects} tasks={w.tasks} runs={w.runs} projectId={w.projectId} taskId={w.taskId} loading={w.loading} busy={w.busy} showArchived={archived} onArchived={setArchived}
   onProject={w.chooseProject} onTask={t=>{w.chooseTask(t);setDrawer(false);}} onNewProject={()=>openName({kind:'project',initial:''})} onNewTask={newConversation}
   onRenameProject={()=>openName({kind:'rename',initial:w.project?.name??'',project:true})} onArchiveProject={()=>{if(w.project)void w.act(()=>projects.update(w.project!.id,w.project!.name,!w.project!.archived));}}
   onRenameTask={t=>openName({kind:'rename',initial:t.title,task:t})} onUpdateTask={t=>void w.act(()=>records.update(t))}
   onSettings={()=>{openSettings();}} onClose={()=>narrow?setDrawer(false):setSidebar(false)} onPaths={()=>{remember();setRecovery('project');}}/>;
  const inspector=task?<WorkbenchInspector key={task.id} task={task} run={run} busy={w.busy} tab={inspectorTab} onTab={setInspectorTab} runtime={{info:runtimeInfo,error:runtime.error,onRefresh:runtime.refresh}} onRefreshUsage={()=>void w.refreshUsage(task.id)} selected={w.attachments[task.id]??[]} onAttach={a=>w.addAttachment(task.id,a.id)}/>:null;
  const content=<main ref={main} tabIndex={-1} className="conversation">
-  {task?<TaskHeader historyControls={!trajectoryOpen?<><label className="header-conversation-search"><Search size={13}/><input aria-label="搜索当前会话" placeholder="搜索会话" value={query} onChange={e=>setSearch({taskId:w.taskId,query:e.target.value})}/></label><IconButton label="刷新历史" disabled={w.historyBusy||running} onClick={()=>{if(!running)void w.history();}}><RefreshCw size={14}/></IconButton></>:undefined} onRuntime={()=>openRuntime(task)} task={task} run={run} busy={w.busy} sidebarVisible={!narrow} onSidebar={()=>narrow?setDrawer(true):setSidebar(true)} onStop={()=>void w.act(()=>host.stop(task.id))} onRestart={()=>void w.act(()=>host.restart(task.id))} onAbort={()=>void w.act(()=>host.abort(task.id))} onRecovery={()=>{remember();setRecovery('task');}} onDetails={()=>setDetails(v=>!v)} detailsOpen={details} onTrajectory={()=>setTrajectoryOpen(v=>!v)} trajectoryOpen={trajectoryOpen}/>:<header className="task-header"><div className="task-header-title">{(narrow||!sidebar)&&<IconButton label="打开侧栏" onClick={()=>narrow?setDrawer(true):setSidebar(true)}><Menu/></IconButton>}<h1>项目工作台</h1></div></header>}
-  <div className="notice-stack">{(w.error?.code==='model_required'||run?.error?.code==='model_required')&&<Button variant="outline" onClick={()=>{openSettings();}}>配置模型</Button>}<ErrorNotice error={w.error}/><ErrorNotice error={run?.error}/><ErrorNotice error={w.historyError}/>
+  {task?<TaskHeader onCopySessionId={()=>void copySessionId(task)} onDownloadSession={()=>void exportSession(task)} exporting={exporting!==null} historyControls={!trajectoryOpen?<><label className="header-conversation-search"><Search size={13}/><input aria-label="搜索当前会话" placeholder="搜索会话" value={query} onChange={e=>setSearch({taskId:w.taskId,query:e.target.value})}/></label><IconButton label="刷新历史" disabled={w.historyBusy||running} onClick={()=>{if(!running)void w.history();}}><RefreshCw size={14}/></IconButton></>:undefined} onRuntime={()=>openRuntime(task)} task={task} run={run} busy={w.busy} sidebarVisible={!narrow} onSidebar={()=>narrow?setDrawer(true):setSidebar(true)} onStop={()=>void w.act(()=>host.stop(task.id))} onRestart={()=>void w.act(()=>host.restart(task.id))} onAbort={()=>void w.act(()=>host.abort(task.id))} onRecovery={()=>{remember();setRecovery('task');}} onDetails={()=>setDetails(v=>!v)} detailsOpen={details} onTrajectory={()=>setTrajectoryOpen(v=>!v)} trajectoryOpen={trajectoryOpen}/>:<header className="task-header"><div className="task-header-title">{(narrow||!sidebar)&&<IconButton label="打开侧栏" onClick={()=>narrow?setDrawer(true):setSidebar(true)}><Menu/></IconButton>}<h1>项目工作台</h1></div></header>}
+  <div className="notice-stack"><ErrorNotice error={sessionError}/>{sessionNotice&&<p role="status" className="text-xs text-muted-foreground break-all">{sessionNotice}</p>}{(w.error?.code==='model_required'||run?.error?.code==='model_required')&&<Button variant="outline" onClick={()=>{openSettings();}}>配置模型</Button>}<ErrorNotice error={w.error}/><ErrorNotice error={run?.error}/><ErrorNotice error={w.historyError}/>
    {w.historyError&&ready&&<Button variant="outline" size="sm" disabled={w.historyBusy} onClick={()=>void w.history()}>重新加载历史</Button>}
 
   </div>

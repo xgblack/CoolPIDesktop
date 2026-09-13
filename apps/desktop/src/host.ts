@@ -35,3 +35,5 @@ export const taskRuntime={
  releaseIdle:()=>invoke<string[]>('runtime_release_idle'),
  command:(taskId:string)=>invoke<RuntimeCommand>('runtime_command',{taskId}),
 };
+
+export const downloadSession=(taskId:string)=>invoke<string|null>('download_task_session',{taskId});

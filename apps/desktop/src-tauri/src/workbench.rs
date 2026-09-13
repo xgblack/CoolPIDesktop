@@ -404,6 +404,30 @@ async fn recover_session(
     w.recover_session(&task_id, confirmed).await
 }
 #[tauri::command]
+async fn download_task_session(app: tauri::AppHandle, w: State<'_, Workbench>, task_id: String) -> Result<Option<String>> {
+    let bytes = w.export_session(&task_id).await?;
+    let task = w.store.task(&task_id).await?;
+    let safe_id: String = task.session_id.unwrap_or(task_id).chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect();
+    let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file()
+        .set_title("下载会话 Session").set_file_name(format!("omp-session-{safe_id}.zip"))
+        .add_filter("Session ZIP", &["zip"]).blocking_save_file())
+        .await.map_err(|e| HostError::new("dialog_failed", e))?;
+    let Some(picked) = picked else { return Ok(None); };
+    let path = picked.into_path().map_err(|e| HostError::new("session_export_failed", e))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        // Never truncate an existing session, resource, or other user file.
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
+            .map_err(|e| HostError::new("session_export_failed", if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "文件已存在，请换一个文件名保存。".to_owned()
+            } else { format!("无法创建导出文件：{e}") }))?;
+        file.write_all(&bytes).and_then(|_| file.sync_all())
+            .map_err(|e| HostError::new("session_export_failed", format!("保存失败，目标位置可能有不完整的 ZIP，请换名重试：{e}")))?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    }).await.map_err(|e| HostError::new("session_export_failed", e))?
+}
+#[tauri::command]
 async fn task_history(
     w: State<'_, Workbench>,
     task_id: String,
@@ -648,6 +672,7 @@ pub fn run() {
             abort_task,
             respond_ui,
             task_history,
+            download_task_session,
             task_trajectory,
             task_trajectory_image,
             task_usage,

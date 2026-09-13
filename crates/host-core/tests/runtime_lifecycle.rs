@@ -289,3 +289,22 @@ async fn real_terminal_exec_keeps_ownership_and_survives_desktop_shutdown() {
     w.shutdown().await.unwrap();
     result.unwrap();
 }
+
+#[tokio::test]
+async fn session_export_refuses_streaming_compaction_queued_and_external_writers() {
+    let (w, id, root) = setup().await;
+    let worker = w.clone();
+    let result = tokio::spawn(async move {
+        worker.runtime_focus(Some(id.clone())).await.unwrap();
+        for state in [json!({"isStreaming":true}), json!({"isCompacting":true}), json!({"queuedMessageCount":1}), json!({"queuedMessageCount":null})] {
+            std::fs::write(root.join("project/state.json"), state.to_string()).unwrap();
+            assert_eq!(worker.export_session(&id).await.unwrap_err().code, "task_busy");
+        }
+        let run_id = worker.runtime.snapshot(&id).await.unwrap().run_id;
+        worker.runtime_action(&id, "stop", Some(run_id)).await.unwrap();
+        let _lease = WriterLease::acquire(&root.join("data"), &id, "terminal").unwrap();
+        assert!(worker.export_session(&id).await.is_err());
+    }).await;
+    w.shutdown().await.unwrap();
+    result.unwrap();
+}

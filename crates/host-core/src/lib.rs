@@ -21,3 +21,5 @@ pub use task::{HostEvent, LaunchOptions, TaskManager, TaskSnapshot};
 pub mod writer_lock;
 pub mod lifecycle;
 pub mod terminal_handoff;
+
+mod session_export;
