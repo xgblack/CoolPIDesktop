@@ -2,7 +2,7 @@ import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState,
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowDown, Check, Copy, RefreshCw, Terminal, Search } from 'lucide-react';
+import { ArrowDown, Check, Copy, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {ActivityRow,activitySummary} from './activity-row';
 import type { Message, ToolActivity } from '../../../../../packages/host-contract/src';
@@ -16,7 +16,7 @@ interface MessageListProps {
   hasMore: boolean;
   loading: boolean;
   onMore: () => void;
-  onRefresh: () => void;
+  query?: string;
   onError: (error: unknown) => void;
 }
 
@@ -91,12 +91,11 @@ function StreamingMarkdown({text,onError}:{text:string;onError:MessageListProps[
  return <><Markdown text={prefix} onError={onError}/><span className="streaming-tail">{text.slice(prefix.length)}</span></>;
 }
 
-export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, onRefresh, onError }: MessageListProps) {
+export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError }: MessageListProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
   const previous = useRef({ taskKey, first: messages[0], height: 0 });
   const [atBottom, setAtBottom] = useState(true);
-  const [query, setQuery] = useState('');
   const normalized = query.trim().toLowerCase();
   const visibleMessages = normalized ? messages.filter(message => JSON.stringify(message.content).toLowerCase().includes(normalized)) : messages;
   const results=useMemo(()=>new Map(messages.filter(m=>m.toolCallId).map(m=>[m.toolCallId!,m])),[messages]);
@@ -142,11 +141,7 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
     <div ref={viewport} role="region" aria-label="对话消息" tabIndex={0} className="h-full overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring"
       onScroll={() => { const e = viewport.current; if (!e) return; bottom.current = e.scrollHeight - e.scrollTop - e.clientHeight < 48; setAtBottom(bottom.current); }}>
       <div className="message-column">
-        <div className="conversation-search">
-          <label className="flex min-w-0 items-center gap-1 rounded border border-border px-2 text-xs"><Search size={13}/><span className="sr-only">搜索当前会话</span><input aria-label="搜索当前会话" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索会话" className="w-32 bg-transparent py-1 outline-none"/></label>
-          {hasMore && <Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button>}
-          {messages.length > 0 && <Button variant="ghost" size="sm" disabled={loading || running} onClick={onRefresh}><RefreshCw size={14} />刷新历史</Button>}
-        </div>
+        {hasMore && <div className="conversation-search"><Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button></div>}
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
         {!loading && messages.length === 0 && !streamingText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
         {transcript.map((item,index)=>item.user?<article key={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={index} className="assistant-turn">

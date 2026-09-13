@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
-const base = { taskKey: 'task-a:run-1', messages: [], streamingText: '', running: false, hasMore: false, loading: false, onMore: vi.fn(), onRefresh: vi.fn(), onError: vi.fn() };
+const base = { taskKey: 'task-a:run-1', messages: [], streamingText: '', running: false, hasMore: false, loading: false, onMore: vi.fn(), onError: vi.fn() };
 
 describe('message rendering', () => {
   it('does not render raw HTML, dangerous links, or remote image elements', async () => {

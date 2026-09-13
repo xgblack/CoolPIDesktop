@@ -1,6 +1,6 @@
 import {useEffect,useState} from 'react';
 import {Tabs} from 'radix-ui';
-import {X} from 'lucide-react';
+import {Copy,X} from 'lucide-react';
 import {trajectory,hostError} from '../../../host';
 import {Markdown} from '../message-list';
 import {durationLabel,kindLabels,statusLabels,stringify,type TrajectoryRecord} from './trajectory-model';
@@ -34,7 +34,7 @@ export function TrajectoryDetails({taskId,record,capabilities,cache,onError,onCl
  {!blocks.length&&record.kind!=='system'&&<pre>{stringify(content)||'未记录'}</pre>}
  {record.images.map(img=><Image key={img.id} taskId={taskId} record={record.id} id={img.id} label={img.label} cache={cache}/>)}
  {record.error&&<pre role="alert" className="trajectory-error">{record.error}</pre>}
- <details><summary>查看记录 JSON</summary><button onClick={()=>void navigator.clipboard.writeText(stringify(record)).catch(onError)}>复制记录</button><pre>{stringify(record)}</pre></details></Tabs.Content>
+ <details><summary>查看记录 JSON</summary><div className="trajectory-record-json"><button type="button" className="trajectory-record-copy" aria-label="复制记录" title="复制记录" onClick={()=>void navigator.clipboard.writeText(stringify(record)).catch(onError)}><Copy size={14} aria-hidden="true"/></button><pre>{stringify(record)}</pre></div></details></Tabs.Content>
  <Tabs.Content value="input"><pre>{stringify(record.input)}</pre></Tabs.Content>
  <Tabs.Content value="output"><pre>{stringify(record.output)}</pre>{record.images.map(img=><Image key={img.id} taskId={taskId} record={record.id} id={img.id} label={img.label} cache={cache}/>)}{record.error&&<pre role="alert">{record.error}</pre>}</Tabs.Content>
  <Tabs.Content value="schema">{schema?<><p>当前 OMP 运行时定义（非历史调用快照）</p><h4>{schema.name}</h4><p>{schema.description}</p><pre>{stringify(schema.parameters)}</pre></>:<p>此记录没有可用的工具 Schema；OMP 历史会话未保存工具定义。</p>}</Tabs.Content>

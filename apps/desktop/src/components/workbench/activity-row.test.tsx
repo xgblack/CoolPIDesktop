@@ -15,7 +15,7 @@ it('running animation follows state and failures remain explicit',()=>{
  expect(container.querySelector('[data-state=running]')).toBeNull();expect(screen.getByText('失败')).toBeTruthy();
 });
 it('keeps final answer visible with thinking and tool steps in a collapsed process',()=>{
- const {container}=render(<MessageList taskKey="a" messages={[{role:'user',content:'hello'},{role:'assistant',content:[{type:'thinking',thinking:'inspect files'},{type:'toolCall',name:'read',arguments:{path:'a.ts'}}]},{role:'toolResult',content:'file content'},{role:'assistant',content:'final answer'}]} streamingText="" running={false} hasMore={false} loading={false} onMore={vi.fn()} onRefresh={vi.fn()} onError={vi.fn()}/>);
+ const {container}=render(<MessageList taskKey="a" messages={[{role:'user',content:'hello'},{role:'assistant',content:[{type:'thinking',thinking:'inspect files'},{type:'toolCall',name:'read',arguments:{path:'a.ts'}}]},{role:'toolResult',content:'file content'},{role:'assistant',content:'final answer'}]} streamingText="" running={false} hasMore={false} loading={false} onMore={vi.fn()} onError={vi.fn()}/>);
  expect(screen.getByText('final answer').closest('details')).toBeNull();
  expect(screen.getAllByText('inspect files')[0].closest('.activity-group')).toBeTruthy();
  expect(container.querySelector('.activity-group')?.hasAttribute('open')).toBe(false);
