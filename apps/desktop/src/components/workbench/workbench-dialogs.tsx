@@ -1,3 +1,4 @@
+import {RuntimeManagement} from './runtime-management';
 import {ModelSettings} from './model-settings';
 import {useState} from 'react';
 import {Copy,FolderOpen,Monitor,Sun,Moon,Search,LoaderCircle,GitBranch,Users} from 'lucide-react';
@@ -8,7 +9,7 @@ import {Checkbox} from '@/components/ui/checkbox';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription,DialogFooter} from '@/components/ui/dialog';
 import {host,hostError,records,recoverSession} from '../../host';
 import {ErrorNotice} from './shared';
-import type {HostError,RuntimeInfo,TaskRecord} from '../../../../../packages/host-contract/src';
+import type {HostError,RuntimeInfo,RuntimeTaskInfo,TaskRecord} from '../../../../../packages/host-contract/src';
 import type {Theme} from './theme';
 
 export function NameDialog({kind,initial,onClose,onSubmit,restoreFocus}:{kind:'project'|'task'|'rename';initial:string;onClose:()=>void;onSubmit:(name:string,trusted:boolean,mode:'shared'|'isolated')=>Promise<void>;restoreFocus:()=>void}){
@@ -22,15 +23,18 @@ export function NameDialog({kind,initial,onClose,onSubmit,restoreFocus}:{kind:'p
  </form></DialogContent></Dialog>;
 }
 
-export function RuntimeSettings({open,onClose,theme,onTheme,themeError,restoreFocus,onSaved}:{open:boolean;onClose:()=>void;theme:Theme;onTheme:(t:Theme)=>void;themeError:string;restoreFocus:()=>void;onSaved:()=>Promise<unknown>}){
- const [tab,setTab]=useState<'general'|'models'>('models');
+export type SettingsTab='general'|'models'|'runtime';
+
+export function RuntimeSettings({tab,onTab:setTab,runtimeTasks,tasks,runtimeError,onRefreshRuntime,onOpenTask,open,onClose,theme,onTheme,themeError,restoreFocus,onSaved}: {tab:SettingsTab;onTab:(tab:SettingsTab)=>void;runtimeTasks:RuntimeTaskInfo[];tasks:TaskRecord[];runtimeError:HostError|null;onRefreshRuntime:()=>Promise<void>;onOpenTask:(task:TaskRecord)=>void;open:boolean;onClose:()=>void;theme:Theme;onTheme:(t:Theme)=>void;themeError:string;restoreFocus:()=>void;onSaved:()=>Promise<unknown>}){
  const [modelDirty,setModelDirty]=useState(false),[confirmClose,setConfirmClose]=useState(false);
  const [path,setPath]=useState(''),[runtime,setRuntime]=useState<RuntimeInfo>(),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
  return <Dialog open={open} onOpenChange={v=>{if(!v){if(modelDirty)setConfirmClose(true);else onClose();}}}><DialogContent className="settings-dialog" onCloseAutoFocus={e=>{e.preventDefault();restoreFocus();}}><DialogHeader><DialogTitle>设置</DialogTitle><DialogDescription>管理工作台外观和系统安装的 OMP。</DialogDescription></DialogHeader>
   {confirmClose&&<div role="alert"><p>有未保存的修改或操作正在执行。完成操作后再关闭，或明确放弃当前输入。</p><Button variant="outline" onClick={()=>setConfirmClose(false)}>继续编辑</Button><Button variant="destructive" onClick={()=>{setConfirmClose(false);setModelDirty(false);onClose();}}>放弃输入并关闭</Button></div>}
-  <div className="settings-navigation"><Button aria-pressed={tab==='models'} variant={tab==='models'?'secondary':'ghost'} onClick={()=>setTab('models')}>模型配置</Button><Button aria-pressed={tab==='general'} variant={tab==='general'?'secondary':'ghost'} onClick={()=>setTab('general')}>外观与运行时</Button></div>
+  <div className="settings-navigation"><Button aria-pressed={tab==='models'} variant={tab==='models'?'secondary':'ghost'} onClick={()=>setTab('models')}>模型配置</Button><Button aria-pressed={tab==='general'} variant={tab==='general'?'secondary':'ghost'} onClick={()=>setTab('general')}>外观</Button><Button aria-pressed={tab==='runtime'} variant={tab==='runtime'?'secondary':'ghost'} onClick={()=>setTab('runtime')}>运行管理</Button></div>
   <div className="settings-body" hidden={tab!=='models'}><h2>模型配置</h2><p className="settings-intro">连接你的模型，开始工作。</p>{open&&<ModelSettings onSaved={onSaved} onDirtyChange={setModelDirty}/>}</div><div className="settings-body" hidden={tab!=='general'}>
   <section className="settings-section"><h3>外观</h3><div className="theme-options">{([['light','浅色',Sun],['dark','深色',Moon],['system','跟随系统',Monitor]] as const).map(([value,label,Icon])=><Button key={value} variant={theme===value?'secondary':'outline'} aria-pressed={theme===value} onClick={()=>onTheme(value)}><Icon/>{label}</Button>)}</div>{themeError&&<p role="alert">{themeError}</p>}</section>
+  </div>
+  <div className="settings-body" hidden={tab!=='runtime'}><h2>运行管理</h2><p className="settings-intro">查看本机 OMP 状态，管理所有任务的运行进程。</p><RuntimeManagement all={runtimeTasks} tasks={tasks} error={runtimeError} onRefresh={onRefreshRuntime} onOpenTask={modelDirty?undefined:onOpenTask}/>{modelDirty&&<p className="inspector-note">模型配置有未保存的修改或操作正在执行，完成后可跳转任务。</p>}
   <section className="settings-section"><h3>OMP 运行时</h3><p className="text-muted-foreground text-xs mb-4">使用本机已安装的 OMP。检测会短暂启动探测进程，不运行任务。</p><Label htmlFor="runtime-path">可执行文件路径</Label><Input id="runtime-path" value={path} onChange={e=>setPath(e.target.value)} placeholder="留空使用已保存路径或 PATH" className="my-2 font-mono text-xs"/><Button variant="outline" disabled={busy} onClick={()=>{setBusy(true);setError(null);void host.runtime(path).then(setRuntime).catch(e=>setError(hostError(e))).finally(()=>setBusy(false));}}>{busy?<LoaderCircle className="animate-spin"/>:<Search/>}{busy?'检测中':'检测 OMP'}</Button>
   {runtime&&<div className="runtime-result"><p>{runtime.status} · {runtime.version??'未知版本'} · RPC {runtime.protocol??'—'}</p><code className="break-all text-xs">{runtime.executable}</code><ErrorNotice error={runtime.error}/></div>}<ErrorNotice error={error}/></section>
   </div>

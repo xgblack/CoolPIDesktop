@@ -2,6 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {RuntimePanel} from './runtime-panel';
+import {RuntimeManagement} from './runtime-management';
 import {taskRuntime} from '@/host';
 import type {RuntimeTaskInfo,TaskRecord} from '../../../../../packages/host-contract/src';
 vi.mock('@/host',()=>({taskRuntime:{action:vi.fn().mockResolvedValue({}),command:vi.fn(),keepAlive:vi.fn().mockResolvedValue(undefined),releaseIdle:vi.fn().mockResolvedValue([])},hostError:(e:unknown)=>e}));
@@ -34,4 +35,23 @@ it('keep alive changes only the selected task',async()=>{
  render(<RuntimePanel task={task} info={{...info,status:'ready'}}/>);
  fireEvent.click(screen.getByRole('checkbox'));
  await waitFor(()=>expect(taskRuntime.keepAlive).toHaveBeenCalledWith('a',true));
+});
+
+it('global release reports failure without affecting task controls and can be retried',async()=>{
+ const refresh=vi.fn().mockResolvedValue(undefined);
+ vi.mocked(taskRuntime.releaseIdle).mockRejectedValueOnce({code:'release_failed',message:'后台进程释放失败'}).mockResolvedValueOnce(['b']);
+ render(<RuntimeManagement all={[info]} tasks={[task]} error={null} onRefresh={refresh}/>);
+ fireEvent.click(screen.getByRole('button',{name:'释放后台空闲进程'}));
+ await screen.findByText('后台进程释放失败');
+ expect(refresh).not.toHaveBeenCalled();
+ expect(taskRuntime.action).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'释放后台空闲进程'}));
+ await screen.findByText('已释放 1 个后台空闲进程');
+ expect(refresh).toHaveBeenCalledOnce();
+});
+it('unknown global state disables release instead of claiming there are no processes',()=>{
+ render(<RuntimeManagement all={[]} tasks={[]} error={{code:'offline',message:'无法连接 Host'}} onRefresh={vi.fn()}/>);
+ expect(screen.getByText('本机 OMP · 状态未知')).toBeTruthy();
+ expect((screen.getByRole('button',{name:'释放后台空闲进程'}) as HTMLButtonElement).disabled).toBe(true);
+ expect(screen.queryByText(/当前没有 OMP 运行进程/)).toBeNull();
 });

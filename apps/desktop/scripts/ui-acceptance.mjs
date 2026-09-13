@@ -63,6 +63,14 @@ try {
   await page.goto(process.env.UI_BASE_URL??'http://127.0.0.1:5173');
   const openSidebar=async()=>{if(width<1024)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();};
   await openSidebar();
+  await page.getByRole('button',{name:/运行管理.*个进程/}).click();
+  await page.getByRole('region',{name:'本机运行管理'}).waitFor();
+  assert.equal(await page.locator('.settings-navigation button[aria-pressed="true"]').innerText(),'运行管理');
+  await page.getByText('当前没有 OMP 运行进程。',{exact:false}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'释放后台空闲进程',exact:true}).isDisabled(),true);
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime-empty.png'});
+  await page.keyboard.press('Escape');
+  await openSidebar();
   await page.getByRole('button',{name:'长中文项目 · OMP 工作台界面改造与回归验证',exact:true}).click();
   if(width<1024)await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'选择模型'}).click();
@@ -84,6 +92,7 @@ try {
   await openSidebar();await page.getByRole('button',{name:'第二个任务 · 草稿和审批隔离',exact:true}).click();
   assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'');
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('任务 B 草稿');
+  await page.waitForFunction(()=>window.__calls.some(c=>c.cmd==='runtime_focus'&&c.args.taskId==='b'));
   await openSidebar();await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
   assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'任务 A 草稿 · 不应发送到任务 B');
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('@work');
@@ -122,6 +131,8 @@ try {
   await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
   await page.getByRole('tab',{name:'运行',exact:true}).click();
   await page.getByText('41820',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('region',{name:'本机运行管理'}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'释放后台空闲进程',exact:true}).count(),0);
   await page.getByRole('checkbox',{name:/保持运行/}).check();
   assert.equal(await page.evaluate(()=>window.__calls.some(c=>c.cmd==='runtime_keep_alive'&&c.args.taskId==='a'&&c.args.keepAlive)),true);
   await page.getByRole('button',{name:'复制终端续接命令',exact:true}).click();
@@ -130,6 +141,19 @@ try {
   assert.match(await page.locator('.runtime-command').innerText(),/--add-dir.*--approval-mode/s);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime.png'});
+  if(width<1024)await page.keyboard.press('Escape');
+  await openSidebar();
+  await page.getByRole('button',{name:/运行管理.*个进程/}).click();
+  const management=page.getByRole('region',{name:'本机运行管理'});
+  await management.waitFor();
+  await management.getByRole('button',{name:/第二个任务/}).waitFor();
+  await management.getByRole('button',{name:'刷新本机运行状态'}).click();
+  await management.getByRole('button',{name:'释放后台空闲进程',exact:true}).click();
+  await page.getByText('没有可安全释放的后台空闲进程',{exact:true}).waitFor();
+  assert.equal(await page.locator('.settings-body:visible').evaluate(e=>e.scrollWidth>e.clientWidth),false);
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime-management.png'});
+  await management.getByRole('button',{name:/审查工作台界面/}).click();
+  await page.getByText('41820',{exact:true}).waitFor();
   await page.getByRole('tab',{name:'文件',exact:true}).click();
   if(width>=1024){
    await page.getByRole('button',{name:'详情全屏',exact:true}).click();
@@ -245,11 +269,11 @@ try {
   if(width<1024)await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'审批模式',exact:true}).filter({hasText:'自动批准'}).waitFor();
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
-  await page.getByRole('button',{name:'外观与运行时',exact:true}).click();
+  await page.getByRole('button',{name:'运行管理',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-settings.png'});
   await page.keyboard.press('Escape');
-  assert.equal(await page.getByRole('dialog').count(),width<1024?1:0);
+  assert.equal(await page.getByRole('dialog').count(),0);
   assert.deepEqual(errors,[]);
   await page.close();
  }

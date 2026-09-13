@@ -6,9 +6,9 @@ import {Button} from '@/components/ui/button';
 import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent,DropdownMenuItem,DropdownMenuSeparator,DropdownMenuCheckboxItem} from '@/components/ui/dropdown-menu';
 import {IconButton} from './shared';
 
-export function ProjectSidebar({projects,tasks,runs,projectId,taskId,loading,busy,showArchived,onArchived,onProject,onTask,onNewProject,onNewTask,onRenameProject,onArchiveProject,onRenameTask,onUpdateTask,onSettings,onClose,onPaths,runtimeTasks=[],onRuntime}: {
+export function ProjectSidebar({projects,tasks,runs,projectId,taskId,loading,busy,showArchived,onArchived,onProject,onTask,onNewProject,onNewTask,onRenameProject,onArchiveProject,onRenameTask,onUpdateTask,onSettings,onClose,onPaths,runtimeTasks=[],onRuntime,onRuntimeManagement}: {
  projects:Project[];tasks:TaskRecord[];runs:TaskSnapshot[];projectId:string;taskId:string;loading:boolean;busy:boolean;showArchived:boolean;onArchived:(v:boolean)=>void;onProject:(id:string)=>void;onTask:(t:TaskRecord)=>void;onNewProject:()=>void;onNewTask:()=>void;onRenameProject:()=>void;onArchiveProject:()=>void;onRenameTask:(t:TaskRecord)=>void;onUpdateTask:(t:TaskRecord)=>void;onSettings:()=>void;onClose:()=>void;onPaths:()=>void;
- runtimeTasks?:RuntimeTaskInfo[];onRuntime?:(task:TaskRecord)=>void;
+ onRuntimeManagement:()=>void;runtimeTasks?:RuntimeTaskInfo[];onRuntime?:(task:TaskRecord)=>void;
 }){
  const [query,setQuery]=useState('');
  const [collapsed,setCollapsed]=useState<Record<string,boolean>>({});
@@ -26,6 +26,6 @@ export function ProjectSidebar({projects,tasks,runs,projectId,taskId,loading,bus
 {expanded&&<div className="project-conversations">{!children.length&&<p className="empty-conversations">{query?'没有匹配的会话':'暂无聊天'}</p>}{children.map(t=>{const info=runtimeTasks.find(r=>r.taskId===t.id),pending=!!runs.find(r=>r.taskId===t.id)?.pendingUi?.length;return <div key={t.id} className={'task-row '+(t.id===taskId?'active':'')}><button className="task-select" onClick={()=>onTask(t)} aria-current={t.id===taskId?'page':undefined}><span className="task-name">{t.pinned&&<Pin size={12}/>}<span className="truncate">{t.title}</span></span></button><button className={`task-runtime-state runtime-${info?.status??'stopped'}`} aria-label={`${t.title}运行详情`} onClick={()=>onRuntime?.(t)}><span className="runtime-dot"/>{runtimeLabel(info,pending)}</button><DropdownMenu><DropdownMenuTrigger asChild><Button aria-label={`${t.title}的操作`} variant="ghost" size="icon-xs" className="task-menu"><MoreHorizontal/></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem onSelect={()=>onRenameTask(t)} disabled={busy}>重命名</DropdownMenuItem><DropdownMenuItem onSelect={()=>onUpdateTask({...t,pinned:!t.pinned})} disabled={busy}>{t.pinned?'取消置顶':'置顶'}</DropdownMenuItem><DropdownMenuItem onSelect={()=>onUpdateTask({...t,archived:!t.archived})} disabled={busy}>{t.archived?'恢复任务':'归档任务'}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>;})}</div>}
    </section>;})}
   </nav>
-  <footer className="sidebar-footer">{onRuntime&&tasks.length>0&&<Button variant="ghost" className="w-full justify-start" onClick={()=>onRuntime(tasks.find(t=>t.id===taskId)??tasks[0])}><Activity/>运行管理<span className="ml-auto text-xs text-muted-foreground">{runtimeTasks.filter(t=>t.pid).length} 个进程</span></Button>}<Button variant="ghost" className="w-full justify-start" onClick={onSettings}><Settings2/>设置<span className="ml-auto text-xs text-muted-foreground">本机 OMP</span></Button></footer>
+  <footer className="sidebar-footer"><Button variant="ghost" className="w-full justify-start" onClick={onRuntimeManagement}><Activity/>运行管理<span className="ml-auto text-xs text-muted-foreground">{runtimeTasks.filter(t=>t.pid).length} 个进程</span></Button><Button variant="ghost" className="w-full justify-start" onClick={onSettings}><Settings2/>设置<span className="ml-auto text-xs text-muted-foreground">本机 OMP</span></Button></footer>
  </aside>;
 }
