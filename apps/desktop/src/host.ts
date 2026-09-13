@@ -25,3 +25,13 @@ export const resources={
 };
 import type {TerminalSnapshot} from '../../../packages/host-contract/src';
 export const terminal={create:(taskId:string,rootIndex:number)=>invoke<TerminalSnapshot>('terminal_create',{taskId,rootIndex}),snapshot:(taskId:string,terminalId:string,after=0)=>invoke<TerminalSnapshot>('terminal_snapshot',{taskId,terminalId,after}),write:(taskId:string,terminalId:string,input:string)=>invoke<void>('terminal_write',{taskId,terminalId,input}),resize:(taskId:string,terminalId:string,cols:number,rows:number)=>invoke<void>('terminal_resize',{taskId,terminalId,cols,rows}),close:(taskId:string,terminalId:string)=>invoke<void>('terminal_close',{taskId,terminalId})};
+
+import type {RuntimeTaskInfo,RuntimeCommand} from '../../../packages/host-contract/src';
+export const taskRuntime={
+ list:()=>invoke<RuntimeTaskInfo[]>('runtime_tasks'),
+ focus:(taskId:string|null)=>invoke<void>('runtime_focus',{taskId}),
+ keepAlive:(taskId:string,keepAlive:boolean)=>invoke<void>('runtime_keep_alive',{taskId,keepAlive}),
+ action:(taskId:string,action:'start'|'stop'|'restart'|'cancel',expectedRunId:string|null)=>invoke<RuntimeTaskInfo>('runtime_action',{taskId,action,expectedRunId}),
+ releaseIdle:()=>invoke<string[]>('runtime_release_idle'),
+ command:(taskId:string)=>invoke<RuntimeCommand>('runtime_command',{taskId}),
+};

@@ -11,10 +11,12 @@ try {
   const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('PAGE ERROR:',e.message);});page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
   await page.route('**/favicon.ico',route=>route.fulfill({status:204}));
   await page.addInitScript(()=>{
+   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedText=text;}}});
    const project={id:'p',name:'长中文项目 · OMP 工作台界面改造与回归验证',roots:['/Users/developer/workspaces/长路径项目/客户端工作台与模型配置预置上下文目录','/tmp/additional-root'],archived:false,trusted:true};
    const task=id=>({id,projectId:'p',title:id==='a'?'审查工作台界面：长中文标题、代码与工具执行输出':'第二个任务 · 草稿和审批隔离',roots:project.roots,pinned:id==='a',archived:false,sessionId:id,sessionFile:'/tmp/'+id,model:'test/qwen3.7-flash'});
    const taskRecords=[task('a'),task('b')];
-   const runs={};let connection;const extra={};
+   const runs={},runtimeTasks={};let connection;const extra={};
+   const runtimeInfo=id=>({taskId:id,runId:id+'-run',status:runs[id]?.status??'ready',owner:'desktop',pid:id==='a'?41820:41821,startedAt:Date.now()-45000,idleSince:null,keepAlive:false,autoStartSuppressed:false,executable:'/opt/homebrew/bin/omp',version:'18.1.15',error:null});
    window.WebSocket=class {
     constructor(){connection=this;setTimeout(()=>this.onopen?.(),0);}
     send(){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'snapshot',tasks:Object.values(runs)})}),0);}
@@ -33,6 +35,12 @@ try {
     case 'observer_info':return{url:'ws://127.0.0.1:9999',token:'test'};case 'task_snapshot':return structuredClone(runs[args.taskId]);case 'list_projects':return[project];case 'task_records':return structuredClone(taskRecords);case 'list_tasks':return Object.values(runs);
     case 'create_task':{const created={...task('created'),title:args.title,sessionId:null,sessionFile:null,model:args.model};taskRecords.push(created);runs.created=snapshot('created');return structuredClone(created);}
     case 'continue_task':runs[args.taskId]=snapshot(args.taskId);return runs[args.taskId];
+    case 'runtime_tasks':return Object.values(runtimeTasks).map(info=>({...info,status:runs[info.taskId]?.status??info.status}));
+    case 'runtime_focus':if(args.taskId&&!runtimeTasks[args.taskId]){runs[args.taskId]??=snapshot(args.taskId);runtimeTasks[args.taskId]=runtimeInfo(args.taskId);}return null;
+    case 'runtime_keep_alive':runtimeTasks[args.taskId].keepAlive=args.keepAlive;return null;
+    case 'runtime_release_idle':return [];
+    case 'runtime_action':{const id=args.taskId;runtimeTasks[id]??=runtimeInfo(id);if(args.action==='stop'){runtimeTasks[id].pid=null;runtimeTasks[id].owner='none';runtimeTasks[id].autoStartSuppressed=true;runs[id].status='stopped';}else{runs[id]??=snapshot(id);runs[id].status='ready';runtimeTasks[id]=runtimeInfo(id);}return runtimeTasks[id];}
+    case 'runtime_command':return{command:"'/Applications/Cool PI Desktop.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
     case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
     case 'search_task_files':case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_roots':return[];case 'task_attachments':return[];
     case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
@@ -112,6 +120,17 @@ try {
   await page.locator('.activity-group > summary').first().click();
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-activity.png'});
   await page.getByRole('button',{name:'工具、用量与变更',exact:true}).click();
+  await page.getByRole('tab',{name:'运行',exact:true}).click();
+  await page.getByText('41820',{exact:true}).waitFor();
+  await page.getByRole('checkbox',{name:/保持运行/}).check();
+  assert.equal(await page.evaluate(()=>window.__calls.some(c=>c.cmd==='runtime_keep_alive'&&c.args.taskId==='a'&&c.args.keepAlive)),true);
+  await page.getByRole('button',{name:'复制终端续接命令',exact:true}).click();
+  await page.locator('.runtime-command').waitFor();
+  await page.getByRole('button',{name:'已复制续接命令',exact:true}).waitFor();
+  assert.match(await page.locator('.runtime-command').innerText(),/--add-dir.*--approval-mode/s);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime.png'});
+  await page.getByRole('tab',{name:'文件',exact:true}).click();
   if(width>=1024){
    await page.getByRole('button',{name:'详情全屏',exact:true}).click();
    await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-fullscreen.png'});

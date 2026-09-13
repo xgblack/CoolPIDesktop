@@ -17,3 +17,7 @@ pub use broker::ObserverInfo;
 pub use runtime::{HostError, RuntimeInfo, probe, resolve_executable};
 pub use session::Workbench;
 pub use task::{HostEvent, LaunchOptions, TaskManager, TaskSnapshot};
+
+pub mod writer_lock;
+pub mod lifecycle;
+pub mod terminal_handoff;

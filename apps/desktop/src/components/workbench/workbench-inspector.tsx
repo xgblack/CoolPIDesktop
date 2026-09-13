@@ -9,6 +9,7 @@ import {TooltipProvider} from '@/components/ui/tooltip';
 import {FilesPanel} from './files-panel';
 import {TerminalPanel} from './terminal-panel';
 import {GitWrites} from './git-writes';
+import {RuntimePanel,type RuntimePanelProps} from './runtime-panel';
 import type {Attachment, GitChange, GitDiff, GitStatus, HostError, TaskRecord, TaskRoot, TaskSnapshot, ToolActivity, UsageSummary} from '../../../../../packages/host-contract/src';
 
 const display = (value: unknown) => JSON.stringify(value, null, 2);
@@ -68,12 +69,13 @@ function ExecutionRoots({task}: {task: TaskRecord}) {
   return <section className="inspector-section" aria-label="执行目录"><div className="inspector-heading"><div><h2>执行目录</h2><p>任务实际使用的目录映射</p></div></div>{roots?.map(root => <div className="root-path" key={root.rootIndex}><span>{root.rootIndex === 0 ? '主目录' : `附加目录 ${root.rootIndex}`} · {root.mode === 'isolated' ? '隔离' : '共享'}</span><code className="break-all">{root.executionPath}</code>{root.branch && <small>分支：{root.branch}</small>}{root.baselineCommit && <small>基线：{root.baselineCommit.slice(0, 12)}</small>}{root.sourceDirty && <small className="text-amber-600">未提交改动未包含在新任务中</small>}</div>)}</section>;
 }
 
-export function WorkbenchInspector({task, run, busy, onRefreshUsage, onAttach, selected}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void; onAttach?: (a:Attachment)=>void; selected?:string[]}) {
-  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><Tabs.Root defaultValue="files" className="inspector-tab-root"><Tabs.List aria-label="详情视图" className="inspector-tabs">{[['files','文件'],['git','变更'],['tools','活动'],['terminal','终端'],['usage','用量']].map(([id,label])=><Tabs.Trigger key={id} value={id}>{label}</Tabs.Trigger>)}</Tabs.List>
+export function WorkbenchInspector({task, run, busy, onRefreshUsage, onAttach, selected,tab,onTab,runtime}: {task: TaskRecord; run?: TaskSnapshot; busy: boolean; onRefreshUsage: () => void; onAttach?: (a:Attachment)=>void; selected?:string[];tab?:string;onTab?:(tab:string)=>void;runtime?:Omit<RuntimePanelProps,'task'|'run'>}) {
+  return <TooltipProvider><aside className="workbench-inspector" aria-label="工作台详情"><Tabs.Root defaultValue="files" value={tab} onValueChange={onTab} className="inspector-tab-root"><Tabs.List aria-label="详情视图" className="inspector-tabs">{[['files','文件'],['git','变更'],['tools','活动'],['terminal','终端'],['usage','用量'],['runtime','运行']].map(([id,label])=><Tabs.Trigger key={id} value={id}>{label}</Tabs.Trigger>)}</Tabs.List>
     <Tabs.Content value="files"><FilesPanel task={task} runId={run?.runId} selected={selected} onAttach={onAttach}/></Tabs.Content>
     <Tabs.Content value="git"><Git key={task.id + JSON.stringify(task.roots)} task={task}/></Tabs.Content>
     <Tabs.Content value="tools"><Tools key={run?.runId} tools={run?.tools}/><ExecutionRoots task={task}/></Tabs.Content>
     <Tabs.Content value="terminal" forceMount hidden={false} className="terminal-tab"><TerminalPanel task={task}/></Tabs.Content>
     <Tabs.Content value="usage"><Usage usage={run?.usage} canRefresh={!!run && ['ready', 'idle', 'interrupted'].includes(run.status)} busy={busy} onRefresh={onRefreshUsage}/></Tabs.Content>
+    <Tabs.Content value="runtime"><RuntimePanel key={task.id} task={task} run={run} {...runtime}/><ExecutionRoots task={task}/></Tabs.Content>
   </Tabs.Root></aside></TooltipProvider>;
 }

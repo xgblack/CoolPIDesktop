@@ -326,6 +326,9 @@ impl TaskManager {
         explicit: Option<String>,
         options: LaunchOptions,
     ) -> Result<TaskSnapshot> {
+        self.start_with_lease(id, explicit, options, None).await
+    }
+    pub async fn start_with_lease(&self, id:String, explicit:Option<String>, options:LaunchOptions, lease:Option<crate::writer_lock::WriterLease>)->Result<TaskSnapshot> {
         if id.is_empty()
             || id.len() > 80
             || !id
@@ -387,7 +390,7 @@ impl TaskManager {
         drop(map);
         self.snapshots.write().await.insert(id, snapshot.clone());
         let initial = snapshot.read().await.clone();
-        tokio::spawn(run(path, options, snapshot, rx, self.broker.clone()));
+        tokio::spawn(run(path, options, snapshot, rx, self.broker.clone(), lease));
         Ok(initial)
     }
     pub async fn restart(&self, id: &str) -> Result<TaskSnapshot> {
@@ -809,10 +812,12 @@ async fn run(
     snapshot: Arc<RwLock<TaskSnapshot>>,
     mut actions: mpsc::Receiver<Action>,
     broker: EventBroker,
+    mut lease: Option<crate::writer_lock::WriterLease>,
 ) {
     let startup = async {
         let info = runtime::probe(&path).await?;
         let mut wire = Wire::spawn_with(&path, &options).await?;
+        if let (Some(lease),Some(pid))=(lease.as_mut(),wire.child.id()) {if let Err(e)=lease.set_pid(pid){wire.close().await?;return Err(e);}}
         match wire.initialize(info).await {
             Ok(info) => {
                 if let Some(expected) = &options.expected_session {
@@ -975,6 +980,7 @@ async fn run(
             let _ = reply.send(Err(HostError::new("process_exited", "OMP process stopped")));
         }
     }
+    drop(lease);
     if let Some(reply) = stop_reply {
         let _ = reply.send(closed);
     }

@@ -42,3 +42,12 @@ export interface ModelConfig {path:string;exists:boolean;revision:string;provide
 export interface ModelEdit {revision:string;originalId:string|null;provider:ModelProvider;credentialAction:'keep'|'replace'|'clear';credential:string|null;deleted:boolean}
 export interface ModelCatalog {version:string;source:string;cached:boolean;models:(ConfigModel&{provider:string;baseUrl:string})[]}
 export interface ModelVerification {defaultModel?:string|null;projectModel?:string|null;stage:'loaded'|'connected';message:string;models:{id:string;provider:string;name?:string}[]}
+
+export interface RuntimeTaskInfo {
+ reason?:string|null;
+ taskId:string; runId:string|null;
+ status:'starting'|'ready'|'idle'|'running'|'interrupted'|'stopped'|'failed'|'external'|'unknown';
+ owner:'desktop'|'terminal'|'none'; pid:number|null; startedAt:number|null; idleSince:number|null;
+ keepAlive:boolean; autoStartSuppressed:boolean; executable:string|null; version:string|null; error:HostError|null;
+}
+export interface RuntimeCommand {command:string;executable:string;arguments:string[]}

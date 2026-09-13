@@ -5,6 +5,19 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 type Result<T> = std::result::Result<T, HostError>;
 
+#[tauri::command]
+async fn runtime_tasks(w:State<'_,Workbench>)->Result<Vec<host_core::lifecycle::RuntimeTaskInfo>>{w.runtime_tasks().await}
+#[tauri::command]
+async fn runtime_focus(w:State<'_,Workbench>,task_id:Option<String>)->Result<()>{w.runtime_focus(task_id).await}
+#[tauri::command]
+async fn runtime_keep_alive(w:State<'_,Workbench>,task_id:String,keep_alive:bool)->Result<()>{w.runtime_keep_alive(&task_id,keep_alive).await}
+#[tauri::command]
+async fn runtime_action(w:State<'_,Workbench>,task_id:String,action:String,expected_run_id:Option<String>)->Result<host_core::lifecycle::RuntimeTaskInfo>{w.runtime_action(&task_id,&action,expected_run_id).await}
+#[tauri::command]
+async fn runtime_release_idle(w:State<'_,Workbench>)->Result<Vec<String>>{w.runtime_release_idle(true).await}
+#[tauri::command]
+async fn runtime_command(w:State<'_,Workbench>,task_id:String)->Result<host_core::lifecycle::RuntimeCommand>{w.runtime_command(&task_id).await}
+
 #[derive(Default)]
 struct SelectedFolders(std::sync::Mutex<std::collections::HashMap<String,std::path::PathBuf>>);
 
@@ -584,11 +597,18 @@ pub fn run() {
         .setup(|app| {
             let directory = app.path().app_data_dir()?;
             let workbench = tauri::async_runtime::block_on(Workbench::open(directory))?;
+            tauri::async_runtime::block_on(workbench.start_handoff_server())?;
+            let maintenance=workbench.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval=tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {interval.tick().await;if let Err(error)=maintenance.runtime_release_idle(false).await {eprintln!("OMP idle maintenance failed: {}",error.code);}}
+            });
             app.manage(workbench);
             app.manage(SelectedFolders::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            runtime_tasks,runtime_focus,runtime_keep_alive,runtime_action,runtime_release_idle,runtime_command,
             model_config_apply,
             model_config_load,
             model_config_save,

@@ -20,9 +20,10 @@ pub struct Workbench {
     pub(crate) data: PathBuf,
     pub(crate) gate: Arc<Mutex<()>>,
     pub(crate) terminals: TerminalService,
+    pub(crate) lifecycle: Arc<Mutex<crate::lifecycle::Lifecycle>>,
 }
 // Only identity metadata is inspected here. OMP alone loads messages and resolves blobs.
-fn session_header(file: &Path) -> Result<Value> {
+pub(crate) fn session_header(file: &Path) -> Result<Value> {
     let meta = std::fs::symlink_metadata(file).map_err(|e| HostError::new("session_missing", e))?;
     if !meta.file_type().is_file() {
         return Err(HostError::new(
@@ -83,6 +84,7 @@ impl Workbench {
             data,
             gate: Default::default(),
             terminals: Default::default(),
+            lifecycle: Default::default(),
         })
     }
     pub async fn detect(&self, explicit: Option<String>) -> crate::RuntimeInfo {
@@ -110,9 +112,12 @@ impl Workbench {
     }
     pub async fn continue_task(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        self.clear_manual_stop(id).await;
         self.continue_locked(id).await
     }
-    async fn continue_locked(&self, id: &str) -> Result<TaskSnapshot> {
+    pub(crate) async fn continue_locked(&self, id: &str) -> Result<TaskSnapshot> {
+        self.check_handoff(id).await?;
         if let Ok(snapshot) = self.runtime.snapshot(id).await {
             if matches!(
                 snapshot.status.as_str(),
@@ -180,10 +185,11 @@ impl Workbench {
             expected_session: task.session_id.clone(),
         };
         let executable = self.store.setting("executable").await?;
+        let lease = crate::writer_lock::WriterLease::acquire(&self.data, id, "desktop")?;
         self.store.begin_run(id, &run_id).await?;
         let initial = match self
             .runtime
-            .start_with(id.into(), executable, options)
+            .start_with_lease(id.into(), executable, options, Some(lease))
             .await
         {
             Ok(v) => v,
@@ -294,6 +300,8 @@ impl Workbench {
     }
     pub async fn stop(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        self.suppress_autostart(id).await;
         self.stop_locked(id).await
     }
     pub async fn records(&self) -> Result<Vec<TaskRecord>> {
@@ -369,6 +377,8 @@ impl Workbench {
     }
     pub async fn restart(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        self.clear_manual_stop(id).await;
         if self.runtime.snapshot(id).await.is_ok() {
             self.stop_locked(id).await?;
             self.runtime.forget_stopped(id).await?;
@@ -379,6 +389,7 @@ impl Workbench {
     pub async fn set_approval_mode(&self, id: &str, mode: Option<String>) -> Result<TaskRecord> {
         crate::task::validate_approval_mode(mode.as_deref())?;
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
         let task = self.store.task(id).await?;
         if task.archived {
             return Err(HostError::new("task_archived", "Restore task before changing approval mode"));
@@ -428,6 +439,7 @@ impl Workbench {
     ) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
         if typ == "prompt" {
+            self.check_handoff(id).await?;
             let state = self.runtime.query(id, "get_state", json!({})).await?;
             if !state["model"].is_object() {
                 return Err(HostError::new(
@@ -541,6 +553,7 @@ impl Workbench {
 
     pub async fn select_model(&self, id: &str, provider: &str, model_id: &str) -> Result<Value> {
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
         let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
             matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
         });
@@ -654,6 +667,7 @@ impl Workbench {
     ) -> Result<TaskRecord> {
         let _guard = self.gate.lock().await;
         if archived {
+            self.check_handoff(id).await?;
             if let Ok(s) = self.runtime.snapshot(id).await {
                 if !matches!(s.status.as_str(), "stopped" | "failed") {
                     return Err(HostError::new("task_busy", "Stop task before archiving"));
@@ -670,6 +684,7 @@ impl Workbench {
         trusted: bool,
     ) -> Result<TaskRecord> {
         let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
         if let Ok(snapshot) = self.runtime.snapshot(id).await {
             if !matches!(snapshot.status.as_str(), "stopped" | "failed") {
                 return Err(HostError::new(
