@@ -12,7 +12,7 @@ try {
   page.on('console',e=>{if(e.type()==='error')errors.push(e.text());});
   await page.addInitScript(()=>{
    const started=Date.now()-123000;
-   const project={id:'p',name:'Cool PI Desktop',roots:['/tmp/turn-ui'],trusted:true,archived:false};
+   const project={id:'p',name:'酷PI',roots:['/tmp/turn-ui'],trusted:true,archived:false};
    const tasks=[{id:'a',projectId:'p',title:'对话底部信息验收',roots:project.roots,sessionId:'omp-a',sessionFile:'/tmp/a.jsonl',model:'test/model',pinned:false,archived:false}];
    const usage=(input,output)=>({input,output,cacheRead:0,cacheWrite:0,totalTokens:input+output,cost:{total:0.002}});
    const history={a:[{role:'user',content:'参考 DSH 和 Codex，为每轮回答增加操作和统计信息。',timestamp:started},{role:'assistant',timestamp:started+200,completedAt:started+1000,content:[{type:'thinking',thinking:'检查 OMP 会话边界与用量来源。'},{type:'toolCall',id:'read-1',name:'read',arguments:{path:'message-list.tsx'}}],usage:usage(800,75)},{role:'toolResult',toolCallId:'read-1',content:'已找到对话组件',timestamp:started+1100},{role:'assistant',timestamp:started+1200,completedAt:started+65000,content:[{type:'text',text:'已为每轮回答补齐底部信息。\n\n- **复制**：保留回答原始 Markdown。\n- **用量**：汇总整轮模型调用，可展开明细。\n- **Fork**：从这一轮创建独立会话，原对话保持不变。\n\n执行过程中，计时会持续更新；切换任务后仍显示真实的执行时间。'}],usage:usage(300,100)}]};
@@ -41,7 +41,7 @@ try {
   });
   await page.goto('http://127.0.0.1:5173/');
   if(width<1024)await page.getByRole('button',{name:'打开侧栏',exact:true}).click();
-  await page.getByRole('button',{name:'Cool PI Desktop',exact:true}).click({timeout:6000}).catch(async e=>{console.error(await page.locator('body').innerText());throw e;});
+  await page.getByRole('button',{name:'酷PI',exact:true}).click({timeout:6000}).catch(async e=>{console.error(await page.locator('body').innerText());throw e;});
   await page.getByRole('button',{name:'对话底部信息验收',exact:true}).click();
   await page.getByText('1,275 tokens',{exact:true}).waitFor();
   assert.equal(await page.getByText('用时 1分5秒',{exact:true}).count(),1);

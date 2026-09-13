@@ -1,4 +1,4 @@
-# Cool PI Desktop
+# 酷PI
 
 基于用户本机安装的 [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) 的桌面客户端，采用 **Tauri 2 + Rust Host + React/TypeScript**。当前面向 macOS 开发。
 

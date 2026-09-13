@@ -187,7 +187,7 @@ struct Endpoint {
 fn unavailable() -> HostError {
     HostError::new(
         "desktop_unavailable",
-        "Open Cool PI Desktop before running the terminal handoff command.",
+        "Open 酷PI before running the terminal handoff command.",
     )
 }
 

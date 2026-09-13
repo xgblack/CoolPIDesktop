@@ -44,17 +44,24 @@ describe('message rendering', () => {
     expect(region.scrollTop).toBe(1200);
   });
 
-  it('keeps one stable text node while streaming and parses markdown only after completion', () => {
+  it('renders markdown during streaming and keeps completed blocks mounted', () => {
     const {container,rerender}=render(<MessageList {...base} streamingText="## 实时" running/>);
-    const streaming=container.querySelector('.streaming-text');
-    expect(streaming?.textContent).toBe('## 实时');
-    expect(container.querySelector('h2')).toBeNull();
-    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running/>);
-    expect(container.querySelector('.streaming-text')).toBe(streaming);
-    expect(container.querySelector('h2')).toBeNull();
-    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running={false}/>);
-    expect(container.querySelector('.streaming-text')).toBeNull();
     expect(screen.getByRole('heading',{name:'实时'})).toBeTruthy();
+    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running/>);
+    expect(screen.getByText('下一段')).toBeTruthy();
+    const heading=screen.getByRole('heading',{name:'实时'});
+    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段\n\n第三段'} running/>);
+    expect(screen.getByRole('heading',{name:'实时'})).toBe(heading);
+    rerender(<MessageList {...base} streamingText={'## 实时\n\n下一段'} running={false}/>);
+    expect(screen.getByRole('heading',{name:'实时'})).toBeTruthy();
+  });
+
+  it('renders an unfinished fenced block as code while chunks arrive', () => {
+    const { container, rerender } = render(<MessageList {...base} streamingText={'```ts\nconst answer ='} running />);
+    expect(screen.getByText('const answer =')).toBeTruthy();
+    expect(container.querySelector('.assistant-markdown-renderer pre')).toBeTruthy();
+    rerender(<MessageList {...base} streamingText={'```ts\nconst answer = 42\n```'} running />);
+    expect(screen.getByText('const answer = 42')).toBeTruthy();
   });
 
   it('keeps the completed stream visible until persisted history takes over', () => {

@@ -57,20 +57,23 @@ function safeUrl(value: string): string | undefined {
   } catch { return undefined; }
 }
 
+const markdownRemarkPlugins = [remarkGfm];
+
 export const Markdown=memo(function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
+  const components = useMemo(() => ({
+    pre: ({ children }: { children?: ReactNode }) => <CodeBlock onError={onError}>{children}</CodeBlock>,
+    a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+      const url = href && safeUrl(href);
+      return url ? <a className="message-link focus-visible:outline-2 focus-visible:outline-ring" href={url}
+        onClick={event => { event.preventDefault(); void invoke('open_external_link', { url }).catch(onError); }}
+        onAuxClick={event => { event.preventDefault(); if (event.button === 1) void invoke('open_external_link', { url }).catch(onError); }}
+        onContextMenu={event => event.preventDefault()}>{children}</a> : <span>{children}</span>;
+    },
+    img: ({ alt }: { alt?: string }) => <span className="text-xs text-muted-foreground">[图片未加载{alt ? `：${alt}` : ''}]</span>,
+    table: ({ children }: { children?: ReactNode }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left text-xs [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_td]:border [&_td]:border-border [&_td]:p-2">{children}</table></div>,
+  }), [onError]);
   return <div className="min-w-0 break-words text-sm leading-relaxed [overflow-wrap:anywhere] [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_h1]:my-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:my-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:my-3 [&_h3]:font-semibold [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs [&_hr]:my-4 [&_hr]:border-border">
-    <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={url => safeUrl(url) ?? ''} components={{
-      pre: ({ children }) => <CodeBlock onError={onError}>{children}</CodeBlock>,
-      a: ({ href, children }) => {
-        const url = href && safeUrl(href);
-        return url ? <a className="message-link focus-visible:outline-2 focus-visible:outline-ring" href={url}
-          onClick={event => { event.preventDefault(); void invoke('open_external_link', { url }).catch(onError); }}
-          onAuxClick={event => { event.preventDefault(); if (event.button === 1) void invoke('open_external_link', { url }).catch(onError); }}
-          onContextMenu={event => event.preventDefault()}>{children}</a> : <span>{children}</span>;
-      },
-      img: ({ alt }) => <span className="text-xs text-muted-foreground">[图片未加载{alt ? `：${alt}` : ''}]</span>,
-      table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left text-xs [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_td]:border [&_td]:border-border [&_td]:p-2">{children}</table></div>,
-    }}>{text}</ReactMarkdown>
+    <ReactMarkdown remarkPlugins={markdownRemarkPlugins} skipHtml urlTransform={url => safeUrl(url) ?? ''} components={components}>{text}</ReactMarkdown>
   </div>;
 },(a,b)=>a.text===b.text);
 
@@ -90,8 +93,93 @@ const MessageContent=memo(function MessageContent({ message, results, onError }:
   })}</>;
 },(a,b)=>a.message===b.message&&a.results===b.results);
 
+interface StreamBlock { key: number; text: string }
+
+interface StreamingMarkdownState {
+  previousText: string;
+  tailStart: number;
+  frozen: StreamBlock[];
+  tail: StreamBlock;
+}
+
+function lineEnd(text: string, start: number): number {
+  const lf = text.indexOf('\n', start);
+  return lf < 0 ? text.length : lf + 1;
+}
+
+function fenceMarker(line: string): { marker: '`' | '~'; length: number; closing: boolean } | null {
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line.replace(/[\r\n]+$/, ''));
+  if (!match) return null;
+  return { marker: match[2][0] as '`' | '~', length: match[2].length, closing: /^[ \t]*$/.test(match[3]) };
+}
+
+/** Keep settled blocks out of the hot path; only the active markdown tail is reparsed. */
+function splitStreamingBlocks(source: string, base: number): { frozen: StreamBlock[]; tailStart: number } {
+  const boundaries: number[] = [];
+  let fence: { marker: '`' | '~'; length: number } | null = null;
+  let start = 0;
+  while (start < source.length) {
+    const end = lineEnd(source, start);
+    const line = source.slice(start, end);
+    const marker = fenceMarker(line);
+    if (fence) {
+      if (marker?.closing && marker.marker === fence.marker && marker.length >= fence.length) fence = null;
+    } else if (marker) fence = { marker: marker.marker, length: marker.length };
+    if (!fence && line.trim() === '') boundaries.push(end);
+    start = end;
+  }
+  const frozen: StreamBlock[] = [];
+  let cursor = 0;
+  for (const boundary of boundaries) {
+    const block = source.slice(cursor, boundary);
+    if (block.trim()) frozen.push({ key: base + cursor, text: block });
+    cursor = boundary;
+  }
+  return { frozen, tailStart: base + cursor };
+}
+
+function streamRenderer(state: StreamingMarkdownState, text: string): StreamingMarkdownState {
+  if (text === state.previousText) return state;
+  if (state.previousText && !text.startsWith(state.previousText)) {
+    state = { previousText: '', tailStart: 0, frozen: [], tail: { key: 0, text: '' } };
+  }
+  const parsed = splitStreamingBlocks(text.slice(state.tailStart), state.tailStart);
+  return {
+    previousText: text,
+    tailStart: parsed.tailStart,
+    frozen: [...state.frozen, ...parsed.frozen],
+    tail: { key: parsed.tailStart, text: text.slice(parsed.tailStart) },
+  };
+}
+
+function closeUnfinishedFence(text: string): string {
+  let open: { marker: '`' | '~'; length: number } | null = null;
+  let start = 0;
+  while (start < text.length) {
+    const end = lineEnd(text, start);
+    const marker = fenceMarker(text.slice(start, end));
+    if (open) {
+      if (marker?.closing && marker.marker === open.marker && marker.length >= open.length) open = null;
+    } else if (marker) open = { marker: marker.marker, length: marker.length };
+    start = end;
+  }
+  return open ? `${text}\n${open.marker.repeat(open.length)}\n` : text;
+}
+
+const StreamingMarkdown = memo(function StreamingMarkdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
+  const stateRef = useRef<StreamingMarkdownState>({ previousText: '', tailStart: 0, frozen: [], tail: { key: 0, text: '' } });
+  const state = useMemo(() => {
+    stateRef.current = streamRenderer(stateRef.current, text);
+    return stateRef.current;
+  }, [text]);
+  return <div className="streaming-markdown" data-streaming="true">
+    {state.frozen.map(block => <Markdown key={block.key} text={block.text} onError={onError}/>)}
+    {state.tail.text && <Markdown key={state.tail.key} text={closeUnfinishedFence(state.tail.text)} onError={onError}/>}
+  </div>;
+}, (a, b) => a.text === b.text);
+
 const StreamingAnswer=memo(function StreamingAnswer({text,complete,onError}:{text:string;complete:boolean;onError:MessageListProps['onError']}){
- return complete?<Markdown text={text} onError={onError}/>:<div className="streaming-text">{text}</div>;
+ return <div className="assistant-markdown-renderer">{complete ? <Markdown text={text} onError={onError}/> : <StreamingMarkdown text={text} onError={onError}/>}</div>;
 },(a,b)=>a.text===b.text&&a.complete===b.complete);
 
 export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, startedAt, onFork, forkDisabled }: MessageListProps) {

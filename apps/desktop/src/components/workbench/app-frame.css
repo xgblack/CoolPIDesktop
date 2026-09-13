@@ -46,7 +46,8 @@
 .project-folders>button { margin:8px; }
 .starter-actions { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:24px; }
 .starter-actions button { min-height:80px; white-space:normal; }
-.streaming-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.7; }
+.streaming-markdown { min-width:0; overflow-wrap:anywhere; }
+.streaming-markdown > div { min-width:0; }
 
 /* Transcript: quiet process disclosures, document-style answers. */
 .assistant-turn{padding:12px 0 24px;min-width:0}

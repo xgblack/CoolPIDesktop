@@ -45,7 +45,7 @@ try {
     case 'runtime_release_idle':return [];
     case 'runtime_action':{const id=args.taskId;runtimeTasks[id]??=runtimeInfo(id);if(args.action==='stop'){runtimeTasks[id].pid=null;runtimeTasks[id].owner='none';runtimeTasks[id].autoStartSuppressed=true;runs[id].status='stopped';}else{runs[id]??=snapshot(id);runs[id].status='ready';runtimeTasks[id]=runtimeInfo(id);}return runtimeTasks[id];}
     case 'download_task_session':if(window.__exportResult==='error')throw{code:'session_export_failed',message:'会话资源缺失，无法完整导出'};return window.__exportResult==='cancel'?null:'/tmp/omp-session-'+args.taskId+'.zip';
-    case 'runtime_command':return{command:"'/Applications/Cool PI Desktop.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
+    case 'runtime_command':return{command:"'/Applications/酷PI.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
     case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
     case 'search_task_files':case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_roots':return[];case 'task_attachments':return[];
     case 'task_git_status':return{rootIndex:args.rootIndex,available:true,branch:'main',changes:[{path:'src/workbench.tsx',indexStatus:'',worktreeStatus:'M',kind:'modified'}]};
@@ -54,7 +54,7 @@ try {
     case 'task_trajectory':{const all=trajectoryRecords;const index=args.cursor?all.findIndex(r=>r.id===args.cursor):-1;const start=args.after&&index>=0?index:Math.max(0,(index>=0?index:all.length)-50);const end=args.after&&index>=0?Math.min(all.length,index+50):index>=0?index:all.length;const records=all.slice(start,end);return{initialSystemPrompt:trajectoryRecords[0],records,nextCursor:start>0?records[0]?.id:null,afterCursor:records.at(-1)?.id,totalRecords:all.length,revision:'fixture',warnings:[]};}
     case 'task_trajectory_image':return{mime:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII='};
     case 'task_history':return{messages:[...(args.taskId==='a'?messages:[{role:'assistant',content:'任务 B 的独立消息',timestamp:4}]),...(extra[args.taskId]??[])],totalMessages:3};
-    case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{const delta='实时增量'+(++n)+' ';runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
+    case 'prompt_task':{const id=args.taskId;extra[id]??=[];extra[id].push({role:'user',content:args.message,timestamp:Date.now()});runs[id].status='running';runs[id].text='';emit(id,'status',{status:'running'});emit(id,'user_message',{text:args.message});setTimeout(()=>{let n=0;const timer=setInterval(()=>{n+=1;const delta=n===1?'## 实时渲染\n\n':`第 ${n} 个增量，包含 **Markdown**。\n\n`;runs[id].text+=delta;emit(id,'message_update',{assistantMessageEvent:{type:'text_delta',delta}});if(n===10){clearInterval(timer);extra[id].push({role:'assistant',content:runs[id].text,timestamp:Date.now()});runs[id].status='idle';emit(id,'status',{status:'idle'});}},70);},900);return structuredClone(runs[id]);}
 
     case 'set_task_approval':{const task=taskRecords.find(t=>t.id===args.taskId);await new Promise(resolve=>setTimeout(resolve,200));task.approvalMode=args.mode;return structuredClone(task);}
     case 'select_task_model':throw{code:'model_unavailable',message:'模型切换失败，保留当前实际模型',suggestion:'检查模型配置。'};
@@ -180,14 +180,14 @@ try {
   await page.getByRole('textbox',{name:'消息',exact:true}).press('Enter');
   await page.getByText('发送后应立即可见的用户消息',{exact:true}).waitFor({timeout:600});
   assert.equal(await page.getByRole('textbox',{name:'消息',exact:true}).inputValue(),'');
-  await page.getByText(/实时增量1/).first().waitFor();
-  await page.evaluate(()=>{window.__streamingTextNode=document.querySelector('.streaming-text');});
-  await page.getByText(/实时增量5/).first().waitFor();
-  assert.equal(await page.evaluate(()=>document.querySelector('.streaming-text')===window.__streamingTextNode),true);
-  await page.getByText(/实时增量10/).first().waitFor();
+  await page.getByRole('heading',{name:'实时渲染'}).waitFor();
+  await page.evaluate(()=>{window.__streamingHeading=document.querySelector('.streaming-markdown h2');});
+  await page.getByText(/第 5 个增量/).first().waitFor();
+  assert.equal(await page.evaluate(()=>document.querySelector('.streaming-markdown h2')===window.__streamingHeading),true);
+  await page.getByText(/第 10 个增量/).first().waitFor();
   await page.getByText('正在生成',{exact:false}).waitFor({state:'hidden'});
-  assert.equal(await page.locator('.streaming-text').count(),0);
-  assert.equal(await page.getByText(/实时增量10/).count(),1);
+  assert.equal(await page.locator('.streaming-markdown').count(),0);
+  assert.equal(await page.getByText(/第 10 个增量/).count(),1);
   await page.getByRole('textbox',{name:'消息',exact:true}).fill('切换审批时保留草稿');
   await page.getByRole('button',{name:'审批模式',exact:true}).click();
   await page.getByRole('menuitemradio',{name:'写入与执行需审批',exact:true}).click();
