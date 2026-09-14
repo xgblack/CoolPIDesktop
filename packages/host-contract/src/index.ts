@@ -20,7 +20,7 @@ export interface TerminalSnapshot{id:string;taskId:string;output:string;start:nu
 export interface ObserverInfo{url:string;token:string}
 export interface Project{id:string;name:string;roots:string[];archived:boolean;trusted:boolean}
 export type ApprovalMode='always-ask'|'write'|'yolo';
-export interface TaskRecord{thinking?:ThinkingLevel|null;approvalMode?:ApprovalMode|null;id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
+export interface TaskRecord{thinking?:ThinkingLevel|null;approvalMode?:ApprovalMode|null;titleSource?:'initial'|'auto'|'user'|string;id:string;projectId:string;title:string;roots:string[];pinned:boolean;archived:boolean;sessionId:string|null;sessionFile:string|null;model:string|null;lastRun?:{id:string;taskId:string;state:string;errorCode:string|null}|null}
 export interface HistoryPage{messages:Message[];nextCursor?:string|null;totalMessages:number}
 export interface MessageUsage extends Partial<Record<'input'|'output'|'reasoning'|'cacheRead'|'cacheWrite'|'inputTokens'|'outputTokens'|'reasoningTokens'|'cacheReadTokens'|'cacheWriteTokens'|'totalTokens',number>> {cost?:number|{total?:number}|null}
 export interface Message{role:string;content:unknown;timestamp?:number;completedAt?:number;duration?:number;ttft?:number;stopReason?:string;usage?:MessageUsage;toolCallId?:string}

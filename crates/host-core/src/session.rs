@@ -5,6 +5,7 @@ use crate::terminal::TerminalService;
 use crate::{HostError, LaunchOptions, TaskManager, TaskSnapshot};
 use serde_json::{Value, json};
 use std::{
+    collections::HashSet,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     sync::Arc,
@@ -21,6 +22,7 @@ pub struct Workbench {
     pub(crate) gate: Arc<Mutex<()>>,
     pub(crate) terminals: TerminalService,
     pub(crate) lifecycle: Arc<Mutex<crate::lifecycle::Lifecycle>>,
+    auto_titles: Arc<Mutex<HashSet<String>>>,
 }
 // Only identity metadata is inspected here. OMP alone loads messages and resolves blobs.
 pub(crate) fn session_header(file: &Path) -> Result<Value> {
@@ -85,6 +87,7 @@ impl Workbench {
             gate: Default::default(),
             terminals: Default::default(),
             lifecycle: Default::default(),
+            auto_titles: Default::default(),
         })
     }
     pub async fn detect(&self, explicit: Option<String>) -> crate::RuntimeInfo {
@@ -450,8 +453,55 @@ impl Workbench {
                 ));
             }
         }
-        self.runtime.request(id, typ, payload).await?;
+        self.runtime.request(id, typ, payload.clone()).await?;
+        if typ == "prompt" {
+            if let Some(message) = payload["message"].as_str() {
+                self.schedule_auto_title(id, message.to_owned()).await;
+            }
+        }
         self.runtime.snapshot(id).await
+    }
+
+    async fn schedule_auto_title(&self, id: &str, message: String) {
+        let task = match self.store.task(id).await {
+            Ok(task) if task.title_source == "initial" => task,
+            _ => return,
+        };
+        if crate::auto_title::low_signal(&message) { return; }
+        let mut pending = self.auto_titles.lock().await;
+        if !pending.insert(id.to_owned()) { return; }
+        let workbench = self.clone();
+        let id = id.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = workbench.generate_auto_title(&id, &task.roots, message).await {
+                eprintln!("auto title unavailable for task {} ({})", id, error.code);
+            }
+            workbench.auto_titles.lock().await.remove(&id);
+        });
+    }
+
+    async fn generate_auto_title(&self, id: &str, roots: &[PathBuf], message: String) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+        loop {
+            let snapshot = self.runtime.snapshot(id).await?;
+            if matches!(snapshot.status.as_str(), "failed" | "stopped") { return Ok(()); }
+            if matches!(snapshot.status.as_str(), "idle" | "ready" | "interrupted") && snapshot.pending_ui.is_empty() { break; }
+            if tokio::time::Instant::now() >= deadline { return Ok(()); }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let task = self.store.task(id).await?;
+        if task.title_source != "initial" || task.session_id.is_none() { return Ok(()); }
+        let snapshot = self.runtime.snapshot(id).await?;
+        let runtime_session = snapshot.runtime.capabilities["state"]["sessionId"].as_str();
+        if runtime_session != task.session_id.as_deref() { return Err(HostError::new("session_mismatch", "OMP session changed before title update")); }
+        let Some(root) = roots.first() else { return Ok(()); };
+        let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?)));
+        let Some(title) = crate::auto_title::generate(Path::new(&snapshot.runtime.executable), root, model.as_deref(), &message).await? else { return Ok(()); };
+        let latest = self.store.task(id).await?;
+        if latest.title_source != "initial" { return Ok(()); }
+        self.runtime.request(id, "set_session_name", json!({"name": title})).await?;
+        self.store.update_auto_title(id, &title).await?;
+        Ok(())
     }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {
         // A stopped task has no in-memory runtime, but its OMP session remains the
@@ -703,7 +753,20 @@ impl Workbench {
                 }
             }
         }
+        let title_changed = self.store.task(id).await?.title != title.trim();
         self.store.update_task(id, title, pinned, archived).await?;
+        if title_changed {
+            if let Ok(snapshot) = self.runtime.snapshot(id).await {
+                if !matches!(snapshot.status.as_str(), "stopped" | "failed") {
+                    // SQLite remains authoritative for the product list; synchronize the
+                    // live OMP session when its RPC process is available.
+                    let _ = self
+                        .runtime
+                        .request(id, "set_session_name", json!({"name": title.trim()}))
+                        .await;
+                }
+            }
+        }
         self.store.task(id).await
     }
     pub async fn relocate_task(

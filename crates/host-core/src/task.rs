@@ -123,6 +123,12 @@ fn update_usage(snapshot: &mut TaskSnapshot, typ: &str, data: &Value) {
         snapshot.usage.cost = data["cost"].as_f64();
     }
 }
+fn update_session_name(snapshot: &mut TaskSnapshot, event: &Value) {
+    let Some(name) = event.get("sessionName").or_else(|| event.get("name")).and_then(Value::as_str) else { return; };
+    if let Some(state) = snapshot.runtime.capabilities.get_mut("state") {
+        if let Some(object) = state.as_object_mut() { object.insert("sessionName".into(), Value::String(name.into())); }
+    }
+}
 fn update_tool(snapshot: &mut TaskSnapshot, typ: &str, event: &Value) {
     let Some(id) = event["toolCallId"].as_str() else {
         return;
@@ -486,7 +492,7 @@ impl TaskManager {
             .map_err(|_| HostError::new("process_exited", "Task stopped"))?
     }
     pub async fn request(&self, id: &str, typ: &'static str, payload: Value) -> Result<()> {
-        if !matches!(typ, "prompt" | "abort" | "extension_ui_response") {
+        if !matches!(typ, "prompt" | "abort" | "extension_ui_response" | "set_session_name") {
             return Err(HostError::new("forbidden_command", typ));
         }
         let tx = self.sender(id).await?;
@@ -973,6 +979,7 @@ async fn run(
                     }
                 }
                 let mut s=snapshot.write().await;
+                if typ == "session_info_update" { update_session_name(&mut s, &v); }
                 let event=s.event(typ,v.clone());
                 update_tool(&mut s,typ,&v);
                 broker.publish(event);
@@ -1113,5 +1120,12 @@ mod tests {
         assert_eq!(state.usage.context_tokens, Some(120));
         assert_eq!(state.usage.total_tokens, Some(42));
         assert_eq!(state.usage.cost, Some(0.12));
+    }
+    #[test]
+    fn session_info_update_refreshes_runtime_name() {
+        let mut state = snapshot();
+        state.runtime.capabilities = json!({"state":{"sessionName":"Initial"}});
+        update_session_name(&mut state, &json!({"sessionName":"Generated"}));
+        assert_eq!(state.runtime.capabilities["state"]["sessionName"], "Generated");
     }
 }

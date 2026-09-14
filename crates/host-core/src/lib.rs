@@ -1,4 +1,5 @@
 pub mod attachments;
+mod auto_title;
 pub mod broker;
 pub mod files;
 pub mod git;

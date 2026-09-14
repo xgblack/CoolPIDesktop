@@ -26,6 +26,7 @@ pub struct TaskRecord {
     pub id: String,
     pub project_id: String,
     pub title: String,
+    pub title_source: String,
     pub roots: Vec<PathBuf>,
     pub pinned: bool,
     pub archived: bool,
@@ -129,6 +130,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         id: row.get(0)?,
         project_id: row.get(1)?,
         title: row.get(2)?,
+        title_source: row.get(14)?,
         roots: paths(row.get(3)?)?,
         pinned: row.get(4)?,
         archived: row.get(5)?,
@@ -150,7 +152,7 @@ fn task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
             .transpose()?,
     })
 }
-const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code,(SELECT NULLIF(value,'') FROM settings WHERE key='task_approval:'||t.id),(SELECT value FROM settings WHERE key='task_thinking:'||t.id) FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
+const TASK_QUERY: &str = "SELECT t.id,t.project_id,t.title,t.roots,t.pinned,t.archived,b.session_id,b.session_file,t.model,r.id,r.state,r.error_code,(SELECT NULLIF(value,'') FROM settings WHERE key='task_approval:'||t.id),(SELECT value FROM settings WHERE key='task_thinking:'||t.id),COALESCE((SELECT NULLIF(value,'') FROM settings WHERE key='task_title_source:'||t.id),'user') FROM tasks t LEFT JOIN session_bindings b ON b.task_id=t.id LEFT JOIN task_runs r ON r.id=(SELECT id FROM task_runs WHERE task_id=t.id ORDER BY started_at DESC,rowid DESC LIMIT 1)";
 
 impl Store {
     pub async fn open(path: PathBuf) -> Result<Self> {
@@ -393,6 +395,7 @@ impl Store {
             let tx = c.transaction().map_err(db)?;
             tx.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",params![id,project_id,title,roots,original,trusted,now()]).map_err(db)?;
             tx.execute("UPDATE tasks SET model=?2 WHERE id=?1",params![id,model]).map_err(db)?;
+            tx.execute("INSERT INTO settings(key,value) VALUES(?1,'initial')", params![format!("task_title_source:{id}")]).map_err(db)?;
             for (index, root) in paths(roots.clone()).map_err(db)?.into_iter().enumerate() {
                 tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
             }
@@ -473,6 +476,11 @@ impl Store {
     ) -> Result<()> {
         let (id, title) = (id.to_owned(), name(title)?);
         self.access(move |c| {
+            let previous_title: String = c
+                .query_row("SELECT title FROM tasks WHERE id=?1", [&id], |r| r.get(0))
+                .optional()
+                .map_err(db)?
+                .ok_or_else(|| HostError::new("task_missing", "Unknown task"))?;
             if archived
                 && c.query_row(
                     "SELECT EXISTS(SELECT 1 FROM task_runs WHERE task_id=?1 AND ended_at IS NULL)",
@@ -483,16 +491,50 @@ impl Store {
             {
                 return Err(HostError::new("task_busy", "Stop task before archiving"));
             }
-            if c.execute(
+            c.execute(
                 "UPDATE tasks SET title=?2,pinned=?3,archived=?4,updated_at=?5 WHERE id=?1",
                 params![id, title, pinned, archived, now()],
             )
-            .map_err(db)?
-                == 0
+            .map_err(db)?;
+            if previous_title != title {
+                c.execute(
+                    "INSERT INTO settings(key,value) VALUES(?1,'user') ON CONFLICT(key) DO UPDATE SET value='user'",
+                    params![format!("task_title_source:{id}")],
+                )
+                .map_err(db)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn update_auto_title(&self, id: &str, title: &str) -> Result<bool> {
+        let (id, title) = (id.to_owned(), name(title)?);
+        self.access(move |c| {
+            let tx = c.transaction().map_err(db)?;
+            let source: String = tx
+                .query_row(
+                    "SELECT COALESCE((SELECT NULLIF(value,'') FROM settings WHERE key='task_title_source:'||?1),'user')",
+                    [&id],
+                    |r| r.get(0),
+                )
+                .map_err(db)?;
+            if source == "user" {
+                return Ok(false);
+            }
+            if tx
+                .execute("UPDATE tasks SET title=?2,updated_at=?3 WHERE id=?1", params![id, title, now()])
+                .map_err(db)? == 0
             {
                 return Err(HostError::new("task_missing", "Unknown task"));
             }
-            Ok(())
+            tx.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,'auto') ON CONFLICT(key) DO UPDATE SET value='auto'",
+                params![format!("task_title_source:{id}")],
+            )
+            .map_err(db)?;
+            tx.commit().map_err(db)?;
+            Ok(true)
         })
         .await
     }
@@ -743,6 +785,21 @@ mod tests {
         let path = std::env::temp_dir().join(format!("cool-pi-store-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&path).unwrap();
         path
+    }
+    #[tokio::test]
+    async fn auto_title_respects_manual_title_source() {
+        let root = dir();
+        let store = Store::open(root.join("db.sqlite")).await.unwrap();
+        let project = store.register_project("Project", vec![root.clone()], true).await.unwrap();
+        let task = store.create_task(&project.id, "Initial").await.unwrap();
+        assert_eq!(task.title_source, "initial");
+        assert!(store.update_auto_title(&task.id, "Generated").await.unwrap());
+        assert_eq!(store.task(&task.id).await.unwrap().title_source, "auto");
+        store.update_task(&task.id, "Manual", false, false).await.unwrap();
+        assert!(!store.update_auto_title(&task.id, "Stale").await.unwrap());
+        let task = store.task(&task.id).await.unwrap();
+        assert_eq!(task.title, "Manual");
+        assert_eq!(task.title_source, "user");
     }
     #[tokio::test]
     async fn persists_and_recovers_interrupted_run() {
