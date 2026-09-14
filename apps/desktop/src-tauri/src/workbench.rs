@@ -225,6 +225,10 @@ async fn update_task(
     w.update_task(&id, &title, pinned, archived).await
 }
 #[tauri::command]
+async fn suggest_task_title(w: State<'_, Workbench>, task_id: String) -> Result<String> {
+    w.suggest_task_title(&task_id).await
+}
+#[tauri::command]
 async fn relocate_task(
     app: tauri::AppHandle,
     w: State<'_, Workbench>,
@@ -683,6 +687,7 @@ pub fn run() {
             task_records,
             create_task,
             update_task,
+            suggest_task_title,
             relocate_task,
             continue_task,
             restart_task,

@@ -505,6 +505,30 @@ impl Workbench {
         }
         Ok(())
     }
+    pub async fn suggest_task_title(&self, id: &str) -> Result<String> {
+        let task = self.store.task(id).await?;
+        if task.archived { return Err(HostError::new("task_archived", "请先恢复归档任务，再生成标题")); }
+        let roots = self.store.validate_task_roots(id).await?;
+        let file = task.session_file.clone().ok_or_else(|| HostError::new("title_context_missing", "当前任务还没有可用于生成标题的会话内容"))?;
+        let session_id = task.session_id.clone().ok_or_else(|| HostError::new("title_context_missing", "当前任务还没有可用于生成标题的会话内容"))?;
+        let context = tokio::task::spawn_blocking(move || {
+            let history = crate::trajectory_history::read(&file, &session_id)?;
+            crate::auto_title::conversation_context(&history).ok_or_else(|| HostError::new("title_context_missing", "当前会话没有足够的有效对话内容来生成标题"))
+        }).await.map_err(|e| HostError::new("session_invalid", e))??;
+        let live = self.runtime.snapshot(id).await.ok().filter(|snapshot| matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted"));
+        let (executable, model) = if let Some(snapshot) = live {
+            let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?))).or(task.model.clone());
+            (PathBuf::from(snapshot.runtime.executable), model)
+        } else {
+            let saved = self.store.executable().await?;
+            (crate::resolve_executable(None, saved.as_deref().map(Path::new))?, task.model.clone())
+        };
+        let root = roots
+            .first()
+            .ok_or_else(|| HostError::new("invalid_workspace", "任务没有工作目录"))?;
+        crate::auto_title::generate_context(&executable, root, model.as_deref(), &context).await?
+            .ok_or_else(|| HostError::new("title_unavailable", "OMP 未能从当前会话生成有效标题，请重试或手工输入"))
+    }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {
         // A stopped task has no in-memory runtime, but its OMP session remains the
         // source of truth. Only use RPC while that task is actually alive.
@@ -808,6 +832,51 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn suggested_title_reads_bound_history_without_mutating_task() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("omp-title-suggestion-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let executable = root.join("fake-omp");
+        std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '<title>Review session export</title>\\n'\n").unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let w = Workbench::open(root.join("data")).await.unwrap();
+        w.store.set_executable(executable.to_string_lossy().into_owned()).await.unwrap();
+        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
+        let task = w.store.create_task_with_model(&project.id, "Original", Some("test/model".into())).await.unwrap();
+        let file = root.join("session.jsonl");
+        let header = json!({"type":"session","version":3,"id":"session","cwd":root});
+        let user = json!({"type":"message","id":"u","parentId":null,"message":{"role":"user","content":"评估会话导出逻辑"}});
+        let assistant = json!({"type":"message","id":"a","parentId":"u","message":{"role":"assistant","content":[{"type":"text","text":"我已经检查了持久化实现"}]}});
+        std::fs::write(&file, format!("{header}\n{user}\n{assistant}\n")).unwrap();
+        w.store.bind(&task.id, "session", file).await.unwrap();
+        assert_eq!(w.suggest_task_title(&task.id).await.unwrap(), "Review session export");
+        let unchanged = w.store.task(&task.id).await.unwrap();
+        assert_eq!(unchanged.title, "Original");
+        assert_eq!(unchanged.title_source, "user");
+        assert!(w.runtime.snapshots().await.is_empty());
+        let arguments = std::fs::read_to_string(executable.with_extension("args")).unwrap();
+        assert!(arguments.lines().any(|argument| argument == "test/model"));
+        assert!(arguments.contains("<chat>\n<user>\n评估会话导出逻辑\n</user>"));
+        assert!(arguments.contains("<assistant>\n我已经检查了持久化实现\n</assistant>\n</chat>"));
+    }
+    #[tokio::test]
+    async fn title_suggestion_requires_matching_session_history() {
+        let root = std::env::temp_dir().join(format!("omp-title-context-errors-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let w = Workbench::open(root.join("data")).await.unwrap();
+        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
+        let missing = w.store.create_task(&project.id, "Missing").await.unwrap();
+        assert_eq!(w.suggest_task_title(&missing.id).await.unwrap_err().code, "title_context_missing");
+        let mismatch = w.store.create_task(&project.id, "Mismatch").await.unwrap();
+        let file = root.join("mismatch.jsonl");
+        std::fs::write(&file, format!("{}\n{}\n", json!({"type":"session","version":3,"id":"actual","cwd":root}), json!({"type":"message","id":"u","message":{"role":"user","content":"meaningful request"}}))).unwrap();
+        w.store.bind(&mismatch.id, "expected", file).await.unwrap();
+        assert_eq!(w.suggest_task_title(&mismatch.id).await.unwrap_err().code, "session_mismatch");
+    }
     #[tokio::test]
     async fn recovery_requires_unique_valid_header_and_explicit_confirmation() {
         let root = std::env::temp_dir().join(format!("omp-recovery-{}", uuid::Uuid::new_v4()));

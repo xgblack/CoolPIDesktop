@@ -45,6 +45,7 @@ try {
     case 'runtime_release_idle':return [];
     case 'runtime_action':{const id=args.taskId;runtimeTasks[id]??=runtimeInfo(id);if(args.action==='stop'){runtimeTasks[id].pid=null;runtimeTasks[id].owner='none';runtimeTasks[id].autoStartSuppressed=true;runs[id].status='stopped';}else{runs[id]??=snapshot(id);runs[id].status='ready';runtimeTasks[id]=runtimeInfo(id);}return runtimeTasks[id];}
     case 'download_task_session':if(window.__exportResult==='error')throw{code:'session_export_failed',message:'会话资源缺失，无法完整导出'};return window.__exportResult==='cancel'?null:'/tmp/omp-session-'+args.taskId+'.zip';
+    case 'suggest_task_title':await new Promise(resolve=>setTimeout(resolve,200));return '自动生成的 OMP 会话标题候选';
     case 'runtime_command':return{command:"'/Applications/酷PI.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
     case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
     case 'search_task_files':case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_roots':return[];case 'task_attachments':return[];
@@ -128,6 +129,21 @@ try {
   await openSidebar();
   await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出',exact:true}).click();
   assert.equal(await page.evaluate(()=>window.__calls.some(x=>x.cmd==='continue_task'&&x.args.taskId==='a')),false);
+
+  await openSidebar();
+  await page.getByRole('button',{name:'审查工作台界面：长中文标题、代码与工具执行输出的操作',exact:true}).click();
+  await page.getByRole('menuitem',{name:'重命名',exact:true}).click();
+  const renameInput=page.getByRole('textbox',{name:'名称',exact:true});
+  await page.getByRole('button',{name:'自动生成',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'生成中',exact:true}).isDisabled(),true);
+  await page.getByText('自动生成的 OMP 会话标题候选',{exact:true}).waitFor();
+  assert.equal(await renameInput.inputValue(),'审查工作台界面：长中文标题、代码与工具执行输出');
+  await page.getByRole('button',{name:'应用',exact:true}).click();
+  assert.equal(await renameInput.inputValue(),'自动生成的 OMP 会话标题候选');
+  assert.equal(await page.evaluate(()=>window.__calls.some(x=>x.cmd==='update_task')),false);
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-rename-title.png'});
+  await page.keyboard.press('Escape');
+  if(width<1024)await page.keyboard.press('Escape');
 
   const headerMenu=()=>page.getByRole('button',{name:'任务运行操作',exact:true}).click();
   await headerMenu();
