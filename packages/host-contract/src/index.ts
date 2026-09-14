@@ -41,6 +41,9 @@ export interface ConfigModel { id:string; originalId?:string; name?:string; api?
 export interface ModelProvider { id:string; baseUrl:string|null; api:string|null; auth:string|null; authHeader:boolean|null; credentialConfigured:boolean; models:ConfigModel[] }
 export interface ModelConfig {path:string;exists:boolean;revision:string;providers:ModelProvider[]}
 export interface ModelEdit {revision:string;originalId:string|null;provider:ModelProvider;credentialAction:'keep'|'replace'|'clear';credential:string|null;deleted:boolean}
+export interface ModelRoles {tiny:string|null;commit:string|null;smol:string|null}
+export interface ModelRolesConfig {path:string;exists:boolean;revision:string;roles:ModelRoles}
+export interface ModelRolesEdit {revision:string;roles:ModelRoles}
 export interface ModelCatalog {version:string;source:string;cached:boolean;models:(ConfigModel&{provider:string;baseUrl:string})[]}
 export type ThinkingLevel='off'|'minimal'|'low'|'medium'|'high'|'xhigh'|'max';
 export type CapabilitySource='omp-runtime'|'catalog'|'config'|'unknown';

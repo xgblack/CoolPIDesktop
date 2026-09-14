@@ -578,6 +578,16 @@ async fn model_config_save(
     host_core::model_config::save(&host_core::model_config::config_path()?, &edit)
 }
 #[tauri::command]
+async fn model_roles_load() -> Result<host_core::model_config::RolesConfig> {
+    host_core::model_config::load_roles(&host_core::model_config::roles_config_path()?)
+}
+#[tauri::command]
+async fn model_roles_save(
+    edit: host_core::model_config::RolesEdit,
+) -> Result<host_core::model_config::RolesConfig> {
+    host_core::model_config::save_roles(&host_core::model_config::roles_config_path()?, &edit)
+}
+#[tauri::command]
 async fn model_catalog(
     app: tauri::AppHandle,
     w: State<'_, Workbench>,
@@ -684,6 +694,8 @@ pub fn run() {
             model_config_apply,
             model_config_load,
             model_config_save,
+            model_roles_load,
+            model_roles_save,
             model_catalog,
             model_config_verify,
             select_project_model,

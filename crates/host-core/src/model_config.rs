@@ -65,7 +65,7 @@ pub struct Edit {
     pub credential: Option<String>,
     pub deleted: bool,
 }
-pub fn config_path() -> Result<PathBuf> {
+fn config_root() -> Result<PathBuf> {
     let root = if let Some(p) = std::env::var_os("PI_CODING_AGENT_DIR") {
         PathBuf::from(p)
     } else {
@@ -77,6 +77,10 @@ pub fn config_path() -> Result<PathBuf> {
     if !root.is_absolute() {
         return Err(err("config_path", "OMP 配置目录必须是绝对路径"));
     }
+    Ok(root)
+}
+pub fn config_path() -> Result<PathBuf> {
+    let root = config_root()?;
     let yml = root.join("models.yml");
     let yaml = root.join("models.yaml");
     if !yml.exists() && yaml.exists() {
@@ -88,6 +92,19 @@ pub fn config_path() -> Result<PathBuf> {
         ))
     } else {
         Ok(yml)
+    }
+}
+pub fn roles_config_path() -> Result<PathBuf> {
+    let root = config_root()?;
+    Ok(select_roles_config_path(&root))
+}
+fn select_roles_config_path(root: &Path) -> PathBuf {
+    let yml = root.join("config.yml");
+    let yaml = root.join("config.yaml");
+    if !yml.exists() && yaml.exists() {
+        yaml
+    } else {
+        yml
     }
 }
 fn revision(path: &Path) -> Result<String> {
@@ -468,6 +485,162 @@ pub fn save(path: &Path, e: &Edit) -> Result<Config> {
     }
     fs::rename(&temp, path).map_err(|_| err("config_write", "原子替换失败，原配置保留"))?;
     load(path)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelRoles {
+    pub tiny: Option<String>,
+    pub commit: Option<String>,
+    pub smol: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolesConfig {
+    pub path: String,
+    pub exists: bool,
+    pub revision: String,
+    pub roles: ModelRoles,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RolesEdit {
+    pub revision: String,
+    pub roles: ModelRoles,
+}
+
+fn read_roles(path: &Path) -> Result<Value> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(_) => return Err(err("config_read", "无法读取 OMP 全局配置")),
+    };
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > LIMIT {
+        return Err(err(
+            "config_path",
+            "OMP 全局配置必须是小于 8 MiB 的普通文件，不能是符号链接",
+        ));
+    }
+    let bytes = fs::read(path).map_err(|_| err("config_read", "无法读取 OMP 全局配置"))?;
+    let doc: Value = serde_yaml_ng::from_slice(&bytes).map_err(|_| {
+        err(
+            "config_parse",
+            "OMP 全局 YAML 解析失败；原文件未修改，请检查语法",
+        )
+    })?;
+    if doc.is_null() {
+        return Ok(json!({}));
+    }
+    if !doc.is_object()
+        || doc
+            .get("modelRoles")
+            .is_some_and(|roles| !roles.is_object())
+    {
+        return Err(err("config_parse", "OMP 全局配置需要 modelRoles 对象"));
+    }
+    Ok(doc)
+}
+
+fn public_roles(doc: &Value) -> Result<ModelRoles> {
+    let role = |name: &str| -> Result<Option<String>> {
+        match doc.get("modelRoles").and_then(|roles| roles.get(name)) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) if valid_id(value) => Ok(Some(value.clone())),
+            Some(_) => Err(err(
+                "config_parse",
+                "tiny、commit 和 smol 角色必须是有效的模型选择器",
+            )),
+        }
+    };
+    Ok(ModelRoles {
+        tiny: role("tiny")?,
+        commit: role("commit")?,
+        smol: role("smol")?,
+    })
+}
+
+pub fn load_roles(path: &Path) -> Result<RolesConfig> {
+    let doc = read_roles(path)?;
+    Ok(RolesConfig {
+        path: path.to_string_lossy().into(),
+        exists: path.exists(),
+        revision: revision(path)?,
+        roles: public_roles(&doc)?,
+    })
+}
+
+fn merge_roles(mut doc: Value, edit: &RolesEdit) -> Result<Value> {
+    let roles = doc
+        .as_object_mut()
+        .expect("read_roles guarantees an object")
+        .entry("modelRoles")
+        .or_insert_with(|| json!({}));
+    let roles = roles
+        .as_object_mut()
+        .ok_or_else(|| err("config_parse", "OMP 全局配置需要 modelRoles 对象"))?;
+    for (name, value) in [
+        ("tiny", &edit.roles.tiny),
+        ("commit", &edit.roles.commit),
+        ("smol", &edit.roles.smol),
+    ] {
+        match value {
+            Some(selector) if valid_id(selector) => {
+                roles.insert(name.into(), Value::String(selector.clone()));
+            }
+            Some(_) => {
+                return Err(err(
+                    "config_validation",
+                    "模型用途选择器不能为空、带首尾空格或包含控制字符",
+                ));
+            }
+            None => {
+                roles.remove(name);
+            }
+        }
+    }
+    Ok(doc)
+}
+
+pub fn save_roles(path: &Path, edit: &RolesEdit) -> Result<RolesConfig> {
+    let _guard = EDIT
+        .lock()
+        .map_err(|_| err("config_write", "配置写入锁不可用"))?;
+    if revision(path)? != edit.revision {
+        return Err(err(
+            "config_conflict",
+            "OMP 全局配置已被其他程序修改，请重载后再编辑",
+        ));
+    }
+    let doc = merge_roles(read_roles(path)?, edit)?;
+    let data = serde_yaml_ng::to_string(&doc).map_err(|_| err("config_write", "配置编码失败"))?;
+    if data.len() as u64 > LIMIT {
+        return Err(err("config_validation", "OMP 全局配置超过 8 MiB，未写入"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| err("config_path", "配置目录无效"))?;
+    fs::create_dir_all(parent).map_err(|_| err("config_write", "无法创建配置目录"))?;
+    let temp = parent.join(format!(".config-{}.tmp", uuid::Uuid::new_v4()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp)
+        .map_err(|_| err("config_write", "无法创建安全临时配置"))?;
+    file.write_all(data.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|_| err("config_write", "写入失败，原配置保留"))?;
+    if revision(path)? != edit.revision {
+        return Err(err("config_conflict", "写入前发现外部修改，原文件已保留"));
+    }
+    fs::rename(&temp, path).map_err(|_| err("config_write", "原子替换失败，原配置保留"))?;
+    load_roles(path)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -939,5 +1112,87 @@ mod tests {
         e.credential = Some("!printenv".into());
         assert!(save(&p, &e).is_err());
         assert!(!p.exists());
+    }
+
+    #[test]
+    fn role_path_prefers_existing_yml_then_yaml() {
+        let root = path().parent().unwrap().to_path_buf();
+        assert_eq!(select_roles_config_path(&root), root.join("config.yml"));
+        fs::write(root.join("config.yaml"), "modelRoles: {}\n").unwrap();
+        assert_eq!(select_roles_config_path(&root), root.join("config.yaml"));
+        fs::write(root.join("config.yml"), "modelRoles: {}\n").unwrap();
+        assert_eq!(select_roles_config_path(&root), root.join("config.yml"));
+    }
+
+    #[test]
+    fn roles_preserve_unknown_fields_and_support_clear_and_thinking_suffix() {
+        let p = path().with_file_name("config.yml");
+        fs::write(
+            &p,
+            "theme: dark\nmodelRoles:\n  default: provider/main\n  future: '@slow'\n  tiny: provider/old\n",
+        )
+        .unwrap();
+        let loaded = load_roles(&p).unwrap();
+        assert_eq!(loaded.roles.tiny.as_deref(), Some("provider/old"));
+        assert_eq!(loaded.roles.commit, None);
+        let saved = save_roles(
+            &p,
+            &RolesEdit {
+                revision: loaded.revision,
+                roles: ModelRoles {
+                    tiny: None,
+                    commit: Some("provider/code:high".into()),
+                    smol: Some("@tiny:low".into()),
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.roles.tiny, None);
+        assert_eq!(saved.roles.commit.as_deref(), Some("provider/code:high"));
+        assert_eq!(saved.roles.smol.as_deref(), Some("@tiny:low"));
+        let raw = read_roles(&p).unwrap();
+        assert_eq!(raw["theme"], "dark");
+        assert_eq!(raw["modelRoles"]["default"], "provider/main");
+        assert_eq!(raw["modelRoles"]["future"], "@slow");
+        assert!(raw["modelRoles"].get("tiny").is_none());
+    }
+
+    #[test]
+    fn empty_role_config_is_valid_first_use() {
+        let p = path().with_file_name("config.yml");
+        fs::write(&p, "").unwrap();
+        let loaded = load_roles(&p).unwrap();
+        assert_eq!(loaded.roles, ModelRoles::default());
+        assert!(loaded.exists);
+    }
+
+    #[test]
+    fn roles_reject_stale_invalid_and_unsafe_edits() {
+        let p = path().with_file_name("config.yml");
+        let loaded = load_roles(&p).unwrap();
+        let mut edit = RolesEdit {
+            revision: loaded.revision,
+            roles: ModelRoles {
+                tiny: Some(" provider/model".into()),
+                commit: None,
+                smol: None,
+            },
+        };
+        assert_eq!(
+            save_roles(&p, &edit).err().unwrap().code,
+            "config_validation"
+        );
+        assert!(!p.exists());
+        fs::write(&p, "modelRoles: {}\n").unwrap();
+        edit.roles.tiny = Some("provider/model".into());
+        assert_eq!(save_roles(&p, &edit).err().unwrap().code, "config_conflict");
+        fs::write(&p, "modelRoles: [secret]\n").unwrap();
+        assert_eq!(load_roles(&p).err().unwrap().code, "config_parse");
+        #[cfg(unix)]
+        {
+            let link = p.with_file_name("config-link.yml");
+            std::os::unix::fs::symlink(&p, &link).unwrap();
+            assert_eq!(load_roles(&link).err().unwrap().code, "config_path");
+        }
     }
 }
