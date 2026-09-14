@@ -1,4 +1,5 @@
 use crate::{HostError, runtime, trajectory_history::History};
+use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 use tokio::time::timeout;
 
@@ -8,7 +9,44 @@ const TITLE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_TITLE_WORDS: usize = 12;
 const CONTEXT_TURN_LIMIT: usize = 6;
-const TITLE_SYSTEM_PROMPT: &str = "Write a roughly five-word title for the supplied user message or conversation. Return only the title inside <title> tags. If it has no concrete task, return <title/>.";
+pub(crate) const TITLE_PROMPT_SETTING: &str = "title_prompt";
+pub(crate) const MAX_TITLE_PROMPT_CHARS: usize = 16_000;
+// Synchronized from OMP 18.1.20 packages/coding-agent/src/prompts/system/title-system.md
+// (last changed at 2c047046d082bf1170ba4159eab9f547e5e01fe9), rendered with includeExamples=true.
+pub const DEFAULT_TITLE_SYSTEM_PROMPT: &str = r#"Write a ~5 word title for the next user message.
+- You MUST ONLY answer with the title, inside the <title> tag.
+- If the message is only a greeting, answer `<title/>`.
+
+<examples>
+[User] <user>the login button is broken on mobile somehow, can you fix?</user>
+[AI]   <title>Fix login button on mobile</title>
+---
+[User] <user>why does quuxdb segfault on startup since yesterday?</user>
+[AI]   <title>Fix quuxdb startup segfault</title>
+---
+[User] <user>hey</user>
+[AI]   <title/>
+</examples>"#;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TitlePromptSettings {
+    pub prompt: String,
+    pub is_default: bool,
+}
+
+pub(crate) fn prompt_settings(custom: Option<String>) -> TitlePromptSettings {
+    match custom.filter(|value| !value.trim().is_empty()) {
+        Some(prompt) => TitlePromptSettings {
+            prompt,
+            is_default: false,
+        },
+        None => TitlePromptSettings {
+            prompt: DEFAULT_TITLE_SYSTEM_PROMPT.to_owned(),
+            is_default: true,
+        },
+    }
+}
 
 const FILLER_TOKENS: &[&str] = &[
     "hi",
@@ -158,20 +196,33 @@ pub(crate) async fn generate(
     root: &Path,
     model: Option<&str>,
     input: &str,
+    system_prompt: &str,
 ) -> Result<Option<String>, HostError> {
     if low_signal(input) {
         return Ok(None);
     }
     let input = bounded_input(input);
     let prompt = format!("<user>\n{input}\n</user>");
-    generate_prompt(executable, root, model, &prompt).await
+    generate_prompt(executable, root, model, &prompt, system_prompt).await
 }
 
-pub(crate) async fn generate_context(executable: &Path, root: &Path, model: Option<&str>, context: &str) -> Result<Option<String>, HostError> {
-    generate_prompt(executable, root, model, &bounded_input(context)).await
+pub(crate) async fn generate_context(
+    executable: &Path,
+    root: &Path,
+    model: Option<&str>,
+    context: &str,
+    system_prompt: &str,
+) -> Result<Option<String>, HostError> {
+    generate_prompt(executable, root, model, &bounded_input(context), system_prompt).await
 }
 
-async fn generate_prompt(executable: &Path, root: &Path, model: Option<&str>, prompt: &str) -> Result<Option<String>, HostError> {
+async fn generate_prompt(
+    executable: &Path,
+    root: &Path,
+    model: Option<&str>,
+    prompt: &str,
+    system_prompt: &str,
+) -> Result<Option<String>, HostError> {
     let mut command = runtime::command(executable);
     // This is a read-only helper process; the live task's RPC process remains the
     // sole session writer and the title prompt must not gain project capabilities.
@@ -187,7 +238,7 @@ async fn generate_prompt(executable: &Path, root: &Path, model: Option<&str>, pr
             "--max-time",
             "15s",
             "--system-prompt",
-            TITLE_SYSTEM_PROMPT,
+            system_prompt,
             "--cwd",
         ])
         .arg(root);
@@ -333,6 +384,7 @@ mod tests {
             &root,
             Some("test/model"),
             "Fix the login timeout",
+            "Custom title prompt",
         )
         .await
         .unwrap();
@@ -354,5 +406,23 @@ mod tests {
         }
         assert!(arguments.lines().any(|argument| argument == "test/model"));
         assert!(arguments.contains("<user>\nFix the login timeout\n</user>"));
+        assert!(arguments
+            .lines()
+            .any(|argument| argument == "Custom title prompt"));
+    }
+
+    #[test]
+    fn default_prompt_matches_rendered_omp_prompt() {
+        assert!(
+            DEFAULT_TITLE_SYSTEM_PROMPT
+                .starts_with("Write a ~5 word title for the next user message.")
+        );
+        assert!(DEFAULT_TITLE_SYSTEM_PROMPT.contains("<examples>"));
+        assert!(
+            DEFAULT_TITLE_SYSTEM_PROMPT.contains("<title>Fix quuxdb startup segfault</title>")
+        );
+        assert!(!DEFAULT_TITLE_SYSTEM_PROMPT.contains("{{#if"));
+        assert!(prompt_settings(None).is_default);
+        assert_eq!(prompt_settings(Some("custom".into())).prompt, "custom");
     }
 }

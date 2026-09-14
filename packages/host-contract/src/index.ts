@@ -59,6 +59,7 @@ export interface RuntimeTaskInfo {
  keepAlive:boolean; autoStartSuppressed:boolean; executable:string|null; version:string|null; error:HostError|null;
 }
 export interface RuntimeCommand {command:string;executable:string;arguments:string[]}
+export interface TitlePromptSettings {prompt:string;isDefault:boolean}
 
 /** Installed catalog application; launch paths remain Host-owned. */
 export interface OpenApp {id:string;name:string}

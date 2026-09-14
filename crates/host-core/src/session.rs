@@ -113,6 +113,53 @@ impl Workbench {
         }
         info
     }
+    pub async fn title_prompt_settings(&self) -> Result<crate::TitlePromptSettings> {
+        Ok(crate::auto_title::prompt_settings(
+            self.store
+                .setting(crate::auto_title::TITLE_PROMPT_SETTING)
+                .await?,
+        ))
+    }
+    pub async fn save_title_prompt(
+        &self,
+        prompt: Option<String>,
+    ) -> Result<crate::TitlePromptSettings> {
+        match prompt {
+            Some(prompt) => {
+                let prompt = prompt.trim();
+                if prompt.is_empty() {
+                    return Err(HostError::new(
+                        "title_prompt_invalid",
+                        "标题提示词不能为空；需要恢复官方提示词时请使用“恢复默认”",
+                    ));
+                }
+                if prompt.chars().count() > crate::auto_title::MAX_TITLE_PROMPT_CHARS {
+                    return Err(HostError::new(
+                        "title_prompt_invalid",
+                        "标题提示词不能超过 16000 个字符",
+                    ));
+                }
+                if prompt.contains('\0') {
+                    return Err(HostError::new(
+                        "title_prompt_invalid",
+                        "标题提示词不能包含空字符",
+                    ));
+                }
+                self.store
+                    .set_setting(
+                        crate::auto_title::TITLE_PROMPT_SETTING,
+                        prompt.to_owned(),
+                    )
+                    .await?;
+            }
+            None => {
+                self.store
+                    .remove_setting(crate::auto_title::TITLE_PROMPT_SETTING)
+                    .await?
+            }
+        }
+        self.title_prompt_settings().await
+    }
     pub async fn continue_task(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
         self.check_handoff(id).await?;
@@ -489,7 +536,8 @@ impl Workbench {
         if runtime_session != task.session_id.as_deref() { return Err(HostError::new("session_mismatch", "OMP session changed before title update")); }
         let Some(root) = roots.first() else { return Ok(()); };
         let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?)));
-        let Some(title) = crate::auto_title::generate(Path::new(&snapshot.runtime.executable), root, model.as_deref(), &message).await? else { return Ok(()); };
+        let title_prompt = self.title_prompt_settings().await?.prompt;
+        let Some(title) = crate::auto_title::generate(Path::new(&snapshot.runtime.executable), root, model.as_deref(), &message, &title_prompt).await? else { return Ok(()); };
 
         let _guard = self.gate.lock().await;
         let latest = self.store.task(id).await?;
@@ -526,7 +574,8 @@ impl Workbench {
         let root = roots
             .first()
             .ok_or_else(|| HostError::new("invalid_workspace", "任务没有工作目录"))?;
-        crate::auto_title::generate_context(&executable, root, model.as_deref(), &context).await?
+        let title_prompt = self.title_prompt_settings().await?.prompt;
+        crate::auto_title::generate_context(&executable, root, model.as_deref(), &context, &title_prompt).await?
             .ok_or_else(|| HostError::new("title_unavailable", "OMP 未能从当前会话生成有效标题，请重试或手工输入"))
     }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {
@@ -847,6 +896,7 @@ mod tests {
         w.store.set_executable(executable.to_string_lossy().into_owned()).await.unwrap();
         let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
         let task = w.store.create_task_with_model(&project.id, "Original", Some("test/model".into())).await.unwrap();
+        w.save_title_prompt(Some("Custom session title prompt".into())).await.unwrap();
         let file = root.join("session.jsonl");
         let header = json!({"type":"session","version":3,"id":"session","cwd":root});
         let user = json!({"type":"message","id":"u","parentId":null,"message":{"role":"user","content":"评估会话导出逻辑"}});
@@ -859,6 +909,7 @@ mod tests {
         assert_eq!(unchanged.title_source, "user");
         assert!(w.runtime.snapshots().await.is_empty());
         let arguments = std::fs::read_to_string(executable.with_extension("args")).unwrap();
+        assert!(arguments.lines().any(|argument| argument == "Custom session title prompt"));
         assert!(arguments.lines().any(|argument| argument == "test/model"));
         assert!(arguments.contains("<chat>\n<user>\n评估会话导出逻辑\n</user>"));
         assert!(arguments.contains("<assistant>\n我已经检查了持久化实现\n</assistant>\n</chat>"));
@@ -876,6 +927,36 @@ mod tests {
         std::fs::write(&file, format!("{}\n{}\n", json!({"type":"session","version":3,"id":"actual","cwd":root}), json!({"type":"message","id":"u","message":{"role":"user","content":"meaningful request"}}))).unwrap();
         w.store.bind(&mismatch.id, "expected", file).await.unwrap();
         assert_eq!(w.suggest_task_title(&mismatch.id).await.unwrap_err().code, "session_mismatch");
+    }
+    #[tokio::test]
+    async fn title_prompt_settings_save_and_restore_official_default() {
+        let root = std::env::temp_dir().join(format!("omp-title-prompt-settings-{}", uuid::Uuid::new_v4()));
+        let w = Workbench::open(root.join("data")).await.unwrap();
+        let initial = w.title_prompt_settings().await.unwrap();
+        assert!(initial.is_default);
+        assert_eq!(initial.prompt, crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT);
+
+        let custom = w.save_title_prompt(Some("  Generate a concise title.  ".into())).await.unwrap();
+        assert!(!custom.is_default);
+        assert_eq!(custom.prompt, "Generate a concise title.");
+        assert_eq!(
+            w.save_title_prompt(Some("   ".into()))
+                .await
+                .unwrap_err()
+                .code,
+            "title_prompt_invalid"
+        );
+        assert_eq!(
+            w.save_title_prompt(Some("invalid\0prompt".into()))
+                .await
+                .unwrap_err()
+                .code,
+            "title_prompt_invalid"
+        );
+
+        let restored = w.save_title_prompt(None).await.unwrap();
+        assert!(restored.is_default);
+        assert_eq!(restored.prompt, crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT);
     }
     #[tokio::test]
     async fn recovery_requires_unique_valid_header_and_explicit_confirmation() {

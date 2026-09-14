@@ -15,6 +15,7 @@ pub mod trajectory_history;
 pub mod trajectory_live;
 pub mod workspace;
 pub use broker::ObserverInfo;
+pub use auto_title::TitlePromptSettings;
 pub use runtime::{HostError, RuntimeInfo, probe, resolve_executable};
 pub use session::Workbench;
 pub use task::{HostEvent, LaunchOptions, TaskManager, TaskSnapshot};

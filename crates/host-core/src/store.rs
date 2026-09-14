@@ -753,6 +753,13 @@ impl Store {
         })
         .await
     }
+    pub async fn remove_setting(&self, key: &str) -> Result<()> {
+        let key = key.to_owned();
+        self.access(move |c| {
+            c.execute("DELETE FROM settings WHERE key=?1", [key]).map_err(db)?;
+            Ok(())
+        }).await
+    }
     pub async fn begin_run(&self, task_id: &str, run_id: &str) -> Result<()> {
         let (task_id, run_id) = (task_id.to_owned(), run_id.to_owned());
         self.access(move |c| {

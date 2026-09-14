@@ -229,6 +229,17 @@ async fn suggest_task_title(w: State<'_, Workbench>, task_id: String) -> Result<
     w.suggest_task_title(&task_id).await
 }
 #[tauri::command]
+async fn title_prompt_load(w: State<'_, Workbench>) -> Result<host_core::TitlePromptSettings> {
+    w.title_prompt_settings().await
+}
+#[tauri::command]
+async fn title_prompt_save(
+    w: State<'_, Workbench>,
+    prompt: Option<String>,
+) -> Result<host_core::TitlePromptSettings> {
+    w.save_title_prompt(prompt).await
+}
+#[tauri::command]
 async fn relocate_task(
     app: tauri::AppHandle,
     w: State<'_, Workbench>,
@@ -688,6 +699,8 @@ pub fn run() {
             create_task,
             update_task,
             suggest_task_title,
+            title_prompt_load,
+            title_prompt_save,
             relocate_task,
             continue_task,
             restart_task,

@@ -16,6 +16,8 @@ try {
    const task=id=>({id,projectId:'p',title:id==='a'?'审查工作台界面：长中文标题、代码与工具执行输出':'第二个任务 · 草稿和审批隔离',roots:project.roots,pinned:id==='a',archived:false,sessionId:`omp-${id}`,sessionFile:'/tmp/'+id,model:'test/qwen3.7-flash'});
    const taskRecords=[task('a'),task('b')];
    const runs={},runtimeTasks={};let connection;const extra={};
+   const officialTitlePrompt='Write a ~5 word title for the next user message.\n- You MUST ONLY answer with the title, inside the <title> tag.\n- If the message is only a greeting, answer `<title/>`.\n\n<examples>\n[User] <user>hey</user>\n[AI]   <title/>\n</examples>';
+   let customTitlePrompt=null;
    const runtimeInfo=id=>({taskId:id,runId:id+'-run',status:runs[id]?.status??'ready',owner:'desktop',pid:id==='a'?41820:41821,startedAt:Date.now()-45000,idleSince:null,keepAlive:false,autoStartSuppressed:false,executable:'/opt/homebrew/bin/omp',version:'18.1.15',error:null});
    window.WebSocket=class {
     constructor(){connection=this;setTimeout(()=>this.onopen?.(),0);}
@@ -46,6 +48,8 @@ try {
     case 'runtime_action':{const id=args.taskId;runtimeTasks[id]??=runtimeInfo(id);if(args.action==='stop'){runtimeTasks[id].pid=null;runtimeTasks[id].owner='none';runtimeTasks[id].autoStartSuppressed=true;runs[id].status='stopped';}else{runs[id]??=snapshot(id);runs[id].status='ready';runtimeTasks[id]=runtimeInfo(id);}return runtimeTasks[id];}
     case 'download_task_session':if(window.__exportResult==='error')throw{code:'session_export_failed',message:'会话资源缺失，无法完整导出'};return window.__exportResult==='cancel'?null:'/tmp/omp-session-'+args.taskId+'.zip';
     case 'suggest_task_title':await new Promise(resolve=>setTimeout(resolve,200));return '自动生成的 OMP 会话标题候选';
+    case 'title_prompt_load':return{prompt:customTitlePrompt??officialTitlePrompt,isDefault:customTitlePrompt===null};
+    case 'title_prompt_save':customTitlePrompt=args.prompt;return{prompt:customTitlePrompt??officialTitlePrompt,isDefault:customTitlePrompt===null};
     case 'runtime_command':return{command:"'/Applications/酷PI.app/Contents/MacOS/cool-pi' session open --task 'a' -- '/opt/homebrew/bin/omp' --resume '/tmp/a' --cwd '/tmp/main' --add-dir '/tmp/additional-root' --approval-mode 'write'",executable:'/opt/homebrew/bin/omp',arguments:['--resume','/tmp/a','--cwd','/tmp/main','--add-dir','/tmp/additional-root','--approval-mode','write']};
     case 'terminal_create':return{id:'term-a',taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_snapshot':return{id:args.terminalId,taskId:args.taskId,output:'',start:0,end:0,exited:false,exitCode:null,error:null};case 'terminal_write':case 'terminal_resize':case 'terminal_close':return null;
     case 'search_task_files':case 'list_task_files':return{entries:[{path:'src/workbench.tsx',name:'workbench.tsx',kind:'file',size:1200}],truncated:false};case 'task_roots':return[];case 'task_attachments':return[];
@@ -104,6 +108,20 @@ try {
   await page.getByText('当前没有 OMP 运行进程。',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'释放后台空闲进程',exact:true}).isDisabled(),true);
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime-empty.png'});
+  await page.getByRole('button',{name:'标题生成',exact:true}).click();
+  const titlePromptField=page.getByLabel('系统提示词');
+  await titlePromptField.waitFor();
+  assert.match(await titlePromptField.inputValue(),/^Write a ~5 word title/);
+  await titlePromptField.fill('Generate a concise Chinese task title.');
+  await page.getByRole('button',{name:'保存提示词',exact:true}).click();
+  await page.getByText('自定义提示词',{exact:true}).waitFor();
+  assert.equal((await page.evaluate(()=>window.__calls.filter(c=>c.cmd==='title_prompt_save').at(-1).args.prompt)),'Generate a concise Chinese task title.');
+  await page.getByRole('button',{name:'恢复默认',exact:true}).click();
+  await page.getByText('已恢复 OMP 官方默认提示词。',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.__calls.filter(c=>c.cmd==='title_prompt_save').at(-1).args.prompt),null);
+  const promptBox=await titlePromptField.boundingBox();
+  assert(promptBox&&promptBox.x>=0&&promptBox.x+promptBox.width<=width+1,'title prompt stays inside viewport');
+  await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-title-prompt.png'});
   await page.keyboard.press('Escape');
   await openSidebar();
   await page.getByRole('button',{name:'长中文项目 · OMP 工作台界面改造与回归验证',exact:true}).click();
