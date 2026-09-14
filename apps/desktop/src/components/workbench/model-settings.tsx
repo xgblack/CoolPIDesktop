@@ -25,7 +25,7 @@ export function ModelSettings({onSaved,onDirtyChange}:{onSaved:()=>Promise<unkno
  const catalogLoad=async()=>{setBusy('预置目录');setCatalogError(null);try{setCatalog(await modelConfig.catalog());}catch(e){setCatalogError(hostError(e));}finally{setBusy('');}};
  const matches=catalog?.models.filter(m=>(m.provider+'/'+m.id+' '+m.name).toLowerCase().includes(query.toLowerCase())).slice(0,60)??[];
  return <section className="model-settings" aria-label="模型配置">
-  <div className="model-toolbar"><div><h3>模型配置</h3><p>配置自定义服务与请求模型，保存到本机 OMP。</p></div><Button variant="outline" disabled={!!busy||dirty} onClick={()=>void load()}><RefreshCw/>重载</Button></div>
+  <div className="model-toolbar model-toolbar-actions"><Button variant="outline" disabled={!!busy||dirty} onClick={()=>void load()}><RefreshCw/>重载</Button></div>
   {config&&<p className="text-xs text-muted-foreground break-all">{config.path}</p>}
   <div className="provider-tabs">{config?.providers.map(p=><Button key={p.id} size="sm" variant={original===p.id?'secondary':'outline'} disabled={!!busy||dirty} onClick={()=>choose(p)}>{p.id}</Button>)}<Button size="sm" variant="outline" disabled={!!busy||dirty||!config} onClick={()=>choose(empty(),true)}><Plus/>添加 Provider</Button></div>
   {config&&!config.providers.length&&!provider&&<p className="model-empty">尚无自定义模型。添加 Provider，填写服务地址、认证与模型 ID 即可开始。</p>}

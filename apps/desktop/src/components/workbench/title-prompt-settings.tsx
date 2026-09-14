@@ -19,8 +19,8 @@ export function TitlePromptSettings({onDirtyChange}:{onDirtyChange?:(dirty:boole
  const apply=(result:Settings,message:string)=>{setSettings(result);setValue(result.prompt);setNotice(message);};
  const save=async()=>{if(!value.trim()||busy)return;setBusy('save');setError(null);setNotice('');try{apply(await titlePrompt.save(value),'标题提示词已保存。');}catch(e){setError(hostError(e));}finally{setBusy('');}};
  const reset=async()=>{if(busy)return;setBusy('reset');setError(null);setNotice('');try{apply(await titlePrompt.save(null),'已恢复 OMP 官方默认提示词。');}catch(e){setError(hostError(e));}finally{setBusy('');}};
- return <section className="settings-section title-prompt-settings" aria-label="标题生成提示词">
-  <div className="model-toolbar"><div><h3>标题生成提示词</h3>{settings&&<p role="status">{settings.isDefault?'OMP 官方默认':'自定义提示词'}</p>}</div></div>
+ return <section className="settings-section settings-section-plain title-prompt-settings" aria-label="标题生成提示词">
+  {settings&&<p role="status" className="settings-status">{settings.isDefault?'OMP 官方默认':'自定义提示词'}</p>}
   {busy==='load'&&!settings?<div className="h-64 animate-pulse rounded-md bg-background" aria-label="正在加载标题提示词"/>:settings?<>
    <Label htmlFor="title-prompt-field">系统提示词</Label>
    <Textarea id="title-prompt-field" className="mt-2 min-h-64 resize-y bg-background font-mono text-xs" value={value} maxLength={MAX_PROMPT_CHARS} disabled={!!busy} aria-invalid={!!error||!value.trim()} onChange={e=>{setValue(e.target.value);setNotice('');setError(null);}}/>
