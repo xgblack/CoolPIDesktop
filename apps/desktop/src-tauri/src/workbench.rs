@@ -32,6 +32,21 @@ async fn runtime_release_idle(w:State<'_,Workbench>)->Result<Vec<String>>{w.runt
 #[tauri::command]
 async fn runtime_command(w:State<'_,Workbench>,task_id:String)->Result<host_core::lifecycle::RuntimeCommand>{w.runtime_command(&task_id).await}
 
+#[tauri::command]
+async fn choose_runtime_executable(app: tauri::AppHandle) -> Result<Option<String>> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_title("选择 OMP 可执行文件").blocking_pick_file()
+    }).await.map_err(|e|HostError::new("dialog_failed",e))?;
+    let Some(path) = picked else { return Ok(None) };
+    let path = path.into_path().map_err(|_|HostError::new("invalid_workspace","无效的 OMP 文件路径"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn discover_runtime_from_login_shell() -> Result<Option<String>> {
+    Ok(host_core::discover_login_shell().await?.map(|path|path.to_string_lossy().into_owned()))
+}
+
 #[derive(Default)]
 struct SelectedFolders(std::sync::Mutex<std::collections::HashMap<String,std::path::PathBuf>>);
 
@@ -691,6 +706,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_in_app_apps, open_in_app_icon, open_in_app,
             runtime_tasks,runtime_focus,runtime_keep_alive,runtime_action,runtime_release_idle,runtime_command,
+            choose_runtime_executable, discover_runtime_from_login_shell,
             model_config_apply,
             model_config_load,
             model_config_save,

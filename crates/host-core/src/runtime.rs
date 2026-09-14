@@ -30,6 +30,7 @@ impl HostError {
             }
             "version_unsupported" => "使用 OMP 官方安装方式更新系统 OMP 后重新检测。",
             "version_unreadable" => "在终端检查所选 OMP 的 --version 输出及启动环境。",
+            "runtime_discovery_failed" => "请改用“选择 OMP”指定绝对路径，或检查登录 Shell 配置。",
             "handshake_failed" | "capability_query_failed" => "检查 OMP 版本与配置，重新启动任务。",
             "task_busy" => "等待当前操作完成，或中止运行中的任务。",
             "directory_missing" | "directory_changed" | "directory_unreadable" => {
@@ -113,6 +114,49 @@ pub fn resolve_executable(explicit: Option<&Path>, saved: Option<&Path>) -> Resu
         "not_found",
         "No omp executable found in PATH",
     ))
+}
+
+/// Discover an external `omp` from the user's login shell without using the
+/// shell to launch it. This is an explicit, user-triggered fallback for GUI
+/// apps whose launchd environment does not contain the user's shell PATH.
+pub async fn discover_login_shell() -> Result<Option<PathBuf>> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = timeout(
+            Duration::from_secs(3),
+            // `-i` is intentional: many macOS users add Homebrew/Bun paths
+            // in .zshrc rather than .zprofile. We still only use the shell to
+            // discover a path; OMP itself is launched directly by Rust.
+            Command::new("/bin/zsh")
+                .args(["-ilc", "whence -p omp"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output(),
+        )
+        .await
+        .map_err(|_| HostError::new("runtime_discovery_failed", "登录 Shell 查找 OMP 超时"))?
+        .map_err(|e| HostError::new("runtime_discovery_failed", e))?;
+        let candidate = String::from_utf8(output.stdout)
+            .map_err(|_| {
+                HostError::new("runtime_discovery_failed", "登录 Shell 输出不是有效 UTF-8")
+            })?
+            .lines()
+            .map(str::trim)
+            .find(|line| {
+                let path = Path::new(line);
+                path.is_absolute() && path.file_name().is_some_and(|name| name == "omp")
+            })
+            .map(PathBuf::from);
+        if !output.status.success() && candidate.is_none() {
+            return Ok(None);
+        }
+        return Ok(candidate);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(None)
+    }
 }
 
 pub(crate) fn command(path: &Path) -> Command {
@@ -251,5 +295,15 @@ mod tests {
                 .code,
             "not_executable"
         );
+    }
+
+    #[test]
+    fn login_shell_candidate_requires_absolute_omp_path() {
+        for value in ["omp", "alias omp=/tmp/omp", "/tmp/not-omp"] {
+            let path = Path::new(value);
+            assert!(!(path.is_absolute() && path.file_name().is_some_and(|name| name == "omp")));
+        }
+        let path = Path::new("/Users/test/.local/bin/omp");
+        assert!(path.is_absolute() && path.file_name().is_some_and(|name| name == "omp"));
     }
 }
