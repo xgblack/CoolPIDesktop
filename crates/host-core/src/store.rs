@@ -395,7 +395,7 @@ impl Store {
             let tx = c.transaction().map_err(db)?;
             tx.execute("INSERT INTO tasks(id,project_id,title,roots,original_roots,trusted,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",params![id,project_id,title,roots,original,trusted,now()]).map_err(db)?;
             tx.execute("UPDATE tasks SET model=?2 WHERE id=?1",params![id,model]).map_err(db)?;
-            tx.execute("INSERT INTO settings(key,value) VALUES(?1,'initial')", params![format!("task_title_source:{id}")]).map_err(db)?;
+            tx.execute("INSERT INTO settings(key,value) VALUES(?1,'user')", params![format!("task_title_source:{id}")]).map_err(db)?;
             for (index, root) in paths(roots.clone()).map_err(db)?.into_iter().enumerate() {
                 tx.execute("INSERT INTO task_roots(task_id,root_index,original_root,execution_path,mode,status) VALUES(?1,?2,?3,?3,'shared','ready')", params![id,index as i64,root.to_string_lossy()]).map_err(db)?;
             }
@@ -537,6 +537,20 @@ impl Store {
             Ok(true)
         })
         .await
+    }
+
+    pub async fn mark_title_initial(&self, id: &str) -> Result<()> {
+        let id = id.to_owned();
+        self.access(move |c| {
+            if !c.query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1)", [&id], |r| r.get::<_,bool>(0)).map_err(db)? {
+                return Err(HostError::new("task_missing", "Unknown task"));
+            }
+            c.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,'initial') ON CONFLICT(key) DO UPDATE SET value='initial'",
+                params![format!("task_title_source:{id}")],
+            ).map_err(db)?;
+            Ok(())
+        }).await
     }
 
     /// Replace a stopped task's directory snapshot after the original directory was moved,
@@ -792,7 +806,8 @@ mod tests {
         let store = Store::open(root.join("db.sqlite")).await.unwrap();
         let project = store.register_project("Project", vec![root.clone()], true).await.unwrap();
         let task = store.create_task(&project.id, "Initial").await.unwrap();
-        assert_eq!(task.title_source, "initial");
+        assert_eq!(task.title_source, "user");
+        store.mark_title_initial(&task.id).await.unwrap();
         assert!(store.update_auto_title(&task.id, "Generated").await.unwrap());
         assert_eq!(store.task(&task.id).await.unwrap().title_source, "auto");
         store.update_task(&task.id, "Manual", false, false).await.unwrap();

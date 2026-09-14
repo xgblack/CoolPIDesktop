@@ -432,6 +432,16 @@ impl TaskManager {
             .ok_or_else(|| HostError::new("task_not_found", id))?;
         Ok(task.snapshot.read().await.clone())
     }
+    pub(crate) async fn publish_event(&self, id: &str, typ: &str, payload: Value) -> Result<()> {
+        let map = self.tasks.read().await;
+        let snapshot = map.get(id).map(|task| task.snapshot.clone()).ok_or_else(|| HostError::new("task_not_found", id))?;
+        drop(map);
+        let mut snapshot = snapshot.write().await;
+        let event = snapshot.event(typ, payload);
+        drop(snapshot);
+        self.broker.publish(event);
+        Ok(())
+    }
     pub async fn forget_stopped(&self, id: &str) -> Result<()> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get(id) {
@@ -836,6 +846,9 @@ struct Pending {
     deadline: Instant,
     reply: Option<oneshot::Sender<Result<()>>>,
 }
+fn non_fatal_request(typ: &str) -> bool {
+    typ == "set_session_name"
+}
 async fn run(
     path: PathBuf,
     options: LaunchOptions,
@@ -951,7 +964,13 @@ async fn run(
                         if v["command"]!=p.typ {let event=snapshot.write().await.fail(HostError::new("protocol_error","Response command mismatch"));broker.publish(event);break;}
                         let result=if v["success"]==true {Ok(())}else{Err(HostError::new("request_failed",v["error"].as_str().unwrap_or("OMP rejected request")))};
                         if let Some(reply)=p.reply.take(){let _=reply.send(result.clone());}
-                        if let Err(e)=result {let event=snapshot.write().await.fail(e);broker.publish(event);if active_prompt.as_deref()==Some(id){active_prompt=None;}}
+                        if let Err(e)=result {
+                            if non_fatal_request(p.typ) {
+                                let event=snapshot.write().await.event("protocol_warning",json!({"message":"OMP rejected a non-critical command","command":p.typ}));broker.publish(event);
+                            } else {
+                                let event=snapshot.write().await.fail(e);broker.publish(event);if active_prompt.as_deref()==Some(id){active_prompt=None;}
+                            }
+                        }
                         if p.typ!="prompt" || v["success"]!=true || v["data"]["agentInvoked"]==false {
                             if p.typ=="prompt" && v["success"]==true {let event=snapshot.write().await.status("idle");broker.publish(event);active_prompt=None;}
                             pending.remove(id);
@@ -988,7 +1007,13 @@ async fn run(
                 let expired:Vec<_>=queries.iter().filter(|(_,(_,deadline,_))|*deadline<=Instant::now()).map(|(id,_)|id.clone()).collect();
                 for id in expired {if let Some((_,_,reply))=queries.remove(&id){let _=reply.send(Err(HostError::new("timeout","Query response timed out")));}}
                 if let Some(id)=pending.iter().find(|(_,p)|p.reply.is_some()&&p.deadline<=Instant::now()).map(|(id,_)|id.clone()) {
-                    let e=HostError::new("timeout",format!("OMP did not respond to {id}"));let event=snapshot.write().await.fail(e);broker.publish(event);break;
+                    let e=HostError::new("timeout",format!("OMP did not respond to {id}"));
+                    if pending.get(&id).is_some_and(|request| non_fatal_request(request.typ)) {
+                        if let Some(mut request)=pending.remove(&id) {if let Some(reply)=request.reply.take(){let _=reply.send(Err(e));}}
+                        let event=snapshot.write().await.event("protocol_warning",json!({"message":"OMP did not respond to a non-critical command","command":"set_session_name"}));broker.publish(event);
+                    } else {
+                        let event=snapshot.write().await.fail(e);broker.publish(event);break;
+                    }
                 }
                 match wire.child.try_wait(){Ok(Some(status))=>{let event=snapshot.write().await.fail(HostError::new("process_exited",status));broker.publish(event);break;},Err(e)=>{let event=snapshot.write().await.fail(HostError::new("process_exited",e));broker.publish(event);break;},_=>{}}
             }
@@ -1127,5 +1152,11 @@ mod tests {
         state.runtime.capabilities = json!({"state":{"sessionName":"Initial"}});
         update_session_name(&mut state, &json!({"sessionName":"Generated"}));
         assert_eq!(state.runtime.capabilities["state"]["sessionName"], "Generated");
+    }
+    #[test]
+    fn classifies_session_name_as_non_fatal() {
+        assert!(non_fatal_request("set_session_name"));
+        assert!(!non_fatal_request("prompt"));
+        assert!(!non_fatal_request("abort"));
     }
 }

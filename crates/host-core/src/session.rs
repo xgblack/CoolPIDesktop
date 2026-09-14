@@ -481,26 +481,28 @@ impl Workbench {
     }
 
     async fn generate_auto_title(&self, id: &str, roots: &[PathBuf], message: String) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-        loop {
-            let snapshot = self.runtime.snapshot(id).await?;
-            if matches!(snapshot.status.as_str(), "failed" | "stopped") { return Ok(()); }
-            if matches!(snapshot.status.as_str(), "idle" | "ready" | "interrupted") && snapshot.pending_ui.is_empty() { break; }
-            if tokio::time::Instant::now() >= deadline { return Ok(()); }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
         let task = self.store.task(id).await?;
         if task.title_source != "initial" || task.session_id.is_none() { return Ok(()); }
         let snapshot = self.runtime.snapshot(id).await?;
+        if matches!(snapshot.status.as_str(), "failed" | "stopped") { return Ok(()); }
         let runtime_session = snapshot.runtime.capabilities["state"]["sessionId"].as_str();
         if runtime_session != task.session_id.as_deref() { return Err(HostError::new("session_mismatch", "OMP session changed before title update")); }
         let Some(root) = roots.first() else { return Ok(()); };
         let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?)));
         let Some(title) = crate::auto_title::generate(Path::new(&snapshot.runtime.executable), root, model.as_deref(), &message).await? else { return Ok(()); };
+
+        let _guard = self.gate.lock().await;
         let latest = self.store.task(id).await?;
         if latest.title_source != "initial" { return Ok(()); }
+        let current = self.runtime.snapshot(id).await?;
+        if matches!(current.status.as_str(), "failed" | "stopped") { return Ok(()); }
+        if current.runtime.capabilities["state"]["sessionId"].as_str() != latest.session_id.as_deref() {
+            return Err(HostError::new("session_mismatch", "OMP session changed before title update"));
+        }
         self.runtime.request(id, "set_session_name", json!({"name": title})).await?;
-        self.store.update_auto_title(id, &title).await?;
+        if self.store.update_auto_title(id, &title).await? {
+            self.runtime.publish_event(id, "task_title_update", json!({"title":title,"source":"auto"})).await?;
+        }
         Ok(())
     }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {

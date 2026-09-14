@@ -199,14 +199,20 @@ async fn create_task(
     title: String,
     mode: Option<String>,
     model: Option<String>,
+    auto_title: Option<bool>,
 ) -> Result<TaskRecord> {
-    w.create_task_with_model(
+    let task = w.create_task_with_model(
         &project_id,
         &title,
         mode.as_deref().unwrap_or("shared"),
         model,
     )
-    .await
+    .await?;
+    if auto_title.unwrap_or(false) {
+        w.store.mark_title_initial(&task.id).await?;
+        return w.store.task(&task.id).await;
+    }
+    Ok(task)
 }
 #[tauri::command]
 async fn update_task(
