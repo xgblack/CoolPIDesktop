@@ -14,6 +14,11 @@ it('running animation follows state and failures remain explicit',()=>{
  rerender(<ActivityRow name="bash" state="failed">output</ActivityRow>);
  expect(container.querySelector('[data-state=running]')).toBeNull();expect(screen.getByText('失败')).toBeTruthy();
 });
+it('exposes semantic kind for expanded thinking and tool styling',()=>{
+ const {container}=render(<><ActivityRow kind="thinking">reasoning</ActivityRow><ActivityRow kind="tool" name="read">result</ActivityRow></>);
+ expect(container.querySelector('[data-kind="thinking"]')).toBeTruthy();
+ expect(container.querySelector('[data-kind="tool"]')).toBeTruthy();
+});
 it('keeps final answer visible with thinking and tool steps in a collapsed process',()=>{
  const {container}=render(<MessageList taskKey="a" messages={[{role:'user',content:'hello'},{role:'assistant',content:[{type:'thinking',thinking:'inspect files'},{type:'toolCall',name:'read',arguments:{path:'a.ts'}}]},{role:'toolResult',content:'file content'},{role:'assistant',content:'final answer'}]} streamingText="" running={false} hasMore={false} loading={false} onMore={vi.fn()} onError={vi.fn()}/>);
  expect(screen.getByText('final answer').closest('details')).toBeNull();
