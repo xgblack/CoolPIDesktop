@@ -64,6 +64,20 @@ describe('Composer', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消生成' }));
     expect(onAbort).toHaveBeenCalledTimes(1);
   });
+
+  it('discovers OMP commands and sends running drafts as steer or follow-up', () => {
+    const onDraft=vi.fn(),onQueue=vi.fn();
+    const {rerender}=render(<Composer {...base} draft="/rev" availableCommands={[{name:'review',description:'Review changes',source:'extension'}]} onDraft={onDraft}/>);
+    fireEvent.click(screen.getByText('/review').closest('button')!);
+    expect(onDraft).toHaveBeenCalledWith('/review ');
+
+    rerender(<Composer {...base} draft="guide this turn" running onQueue={onQueue} queuedCount={2}/>);
+    fireEvent.click(screen.getByRole('button',{name:'发送引导消息'}));
+    expect(onQueue).toHaveBeenLastCalledWith('steer');
+    fireEvent.click(screen.getByRole('button',{name:'排队 2'}));
+    fireEvent.click(screen.getByRole('button',{name:'加入后续队列'}));
+    expect(onQueue).toHaveBeenLastCalledWith('follow_up');
+  });
 });
 
 it('allows attachment-only sends and routes exact local commands without sending them to OMP',()=>{

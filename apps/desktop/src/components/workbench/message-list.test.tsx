@@ -29,6 +29,14 @@ describe('message rendering', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('const x = 1;\n'));
   });
 
+  it('applies the explicit default Thinking expansion preference',()=>{
+    const message={role:'assistant',content:[{type:'thinking',thinking:'inspect privately'},{type:'text',text:'answer'}]};
+    const {container,rerender}=render(<MessageList {...base} messages={[message]}/>);
+    expect(container.querySelector('.activity-row')?.hasAttribute('open')).toBe(false);
+    rerender(<MessageList {...base} messages={[message]} thinkingExpanded/>);
+    expect(container.querySelector('.activity-row')?.hasAttribute('open')).toBe(true);
+  });
+
   it('keeps user scroll position and keyboard focus during streaming, and resets on task switch', () => {
     const { rerender } = render(<MessageList {...base} streamingText="first" running />);
     const region = screen.getByRole('region', { name: '对话消息' });
@@ -93,6 +101,24 @@ describe('message rendering', () => {
     expect((screen.getByRole('button', { name: '加载更多消息' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '复制代码' }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+  });
+
+  it('shows a stable minimap and quotes only text selected inside the transcript', async()=>{
+    const onQuote=vi.fn();
+    render(<MessageList {...base} onQuote={onQuote} messages={[
+      {role:'user',content:'first question'},
+      {role:'assistant',content:'first answer'},
+      {role:'user',content:'second question'},
+      {role:'assistant',content:'second answer'},
+    ]}/>);
+    expect(screen.getByRole('navigation',{name:'对话导航'})).toBeTruthy();
+    expect(screen.getAllByRole('button',{name:/跳转到第/})).toHaveLength(4);
+    const text=screen.getByText('first answer').firstChild!;
+    const range=document.createRange();range.selectNodeContents(text);
+    const selection=window.getSelection()!;selection.removeAllRanges();selection.addRange(range);
+    fireEvent.mouseUp(screen.getByRole('region',{name:'对话消息'}));
+    fireEvent.click(await screen.findByRole('button',{name:'引用到输入框'}));
+    expect(onQuote).toHaveBeenCalledWith('first answer');
   });
 });
 

@@ -1,4 +1,6 @@
-use crate::{HostError, TaskSnapshot, Workbench, runtime::Result, writer_lock};
+use crate::{
+    HostError, RpcQuery, RpcRequest, TaskSnapshot, Workbench, runtime::Result, writer_lock,
+};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -56,7 +58,9 @@ impl Workbench {
     }
     async fn runtime_command_locked(&self, id: &str) -> Result<RuntimeCommand> {
         let task = self.store.task(id).await?;
-        if let Some(level) = &task.thinking { self.validate_thinking(&task, level).await?; }
+        if let Some(level) = &task.thinking {
+            self.validate_thinking(&task, level).await?;
+        }
         if task.archived {
             return Err(HostError::new("task_archived", "请先恢复归档任务"));
         }
@@ -94,7 +98,9 @@ impl Workbench {
                 "ready" | "idle" | "interrupted" | "running"
             )
         }) {
-            self.runtime.query(id, "get_state", json!({})).await?
+            self.runtime
+                .query(id, RpcQuery::GetState, json!({}))
+                .await?
         } else {
             snapshot.as_ref().map_or(serde_json::Value::Null, |s| {
                 s.runtime.capabilities["state"].clone()
@@ -110,7 +116,11 @@ impl Workbench {
         if let Some(model) = model {
             arguments.extend(["--model".into(), model]);
         }
-        if let Some(thinking) = task.thinking.as_deref().or_else(|| state["thinkingLevel"].as_str()) {
+        if let Some(thinking) = task
+            .thinking
+            .as_deref()
+            .or_else(|| state["thinkingLevel"].as_str())
+        {
             arguments.extend(["--thinking".into(), thinking.into()]);
         }
         let app = std::env::current_exe().map_err(|e| HostError::new("executable_missing", e))?;
@@ -316,7 +326,10 @@ impl Workbench {
         {
             return Err(HostError::new("task_busy", "任务仍在运行或等待审批"));
         }
-        let state = self.runtime.query(id, "get_state", json!({})).await?;
+        let state = self
+            .runtime
+            .query(id, RpcQuery::GetState, json!({}))
+            .await?;
         let current = self.runtime.snapshot(id).await?;
         if state["isStreaming"] != false
             || state["isCompacting"] != false
@@ -418,7 +431,9 @@ impl Workbench {
                         .reason = Some("手动停止".into());
                 }
                 "cancel" => {
-                    self.runtime.request(id, "abort", json!({})).await?;
+                    self.runtime
+                        .request(id, RpcRequest::Abort, json!({}))
+                        .await?;
                 }
                 _ => return Err(HostError::new("invalid_action", "未知运行操作")),
             }

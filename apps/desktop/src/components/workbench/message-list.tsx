@@ -2,7 +2,7 @@ import { Children, isValidElement, useLayoutEffect, useRef, useState, memo, useM
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowDown, Check, Copy } from 'lucide-react';
+import { ArrowDown, Check, Copy, Quote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {ActivityRow,activitySummary} from './activity-row';
 import type { Message, ToolActivity } from '../../../../../packages/host-contract/src';
@@ -24,6 +24,8 @@ interface MessageListProps {
   onMore: () => void;
   query?: string;
   onError: (error: unknown) => void;
+  onQuote?: (text:string) => void;
+  thinkingExpanded?:boolean;
 }
 
 function plainText(children: ReactNode): string {
@@ -77,21 +79,21 @@ export const Markdown=memo(function Markdown({ text, onError }: { text: string; 
   </div>;
 },(a,b)=>a.text===b.text);
 
-const MessageContent=memo(function MessageContent({ message, results, onError }: { message: Message; results?: Map<string,Message>; onError: MessageListProps['onError'] }) {
+const MessageContent=memo(function MessageContent({ message, results, onError, thinkingExpanded=false }: { message: Message; results?: Map<string,Message>; onError: MessageListProps['onError'];thinkingExpanded?:boolean }) {
   const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content }]
     : Array.isArray(message.content) ? message.content : [{ type: 'unknown', value: message.content }];
   return <>{blocks.map((raw: unknown, index: number) => {
     const block = raw && typeof raw === 'object' ? raw as Record<string, unknown> : { type: 'text', text: String(raw ?? '') };
     if (block.type === 'thinking' || block.type === 'reasoning') {
       const thought = typeof block.thinking === 'string' ? block.thinking : typeof block.text === 'string' ? block.text : '';
-      return <ActivityRow key={index} kind="thinking" preview={activitySummary(thought)}><Markdown text={thought} onError={onError}/></ActivityRow>;
+      return <ActivityRow key={index} kind="thinking" preview={activitySummary(thought)} defaultOpen={thinkingExpanded}><Markdown text={thought} onError={onError}/></ActivityRow>;
     }
     if (typeof block.text === 'string') return <Markdown key={index} text={block.text} onError={onError} />;
     if (block.type === 'image') return <p key={index} className="my-2 text-xs text-muted-foreground">[图片未加载]</p>;
     if (block.type === 'toolCall' || block.type === 'tool_use') {const result=results?.get(String(block.id??''));return <ActivityRow key={index} name={String(block.name??'工具')} state={result?((result as Message & {isError?:boolean}).isError?'failed':'succeeded'):undefined} preview={activitySummary(block.arguments??block.input)}><pre>{JSON.stringify(block.arguments??block.input??{},null,2)}</pre>{result&&<MessageContent message={result} onError={onError}/>}</ActivityRow>;}
     return <pre key={index} className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs text-muted-foreground">{JSON.stringify(block.value ?? block, null, 2)}</pre>;
   })}</>;
-},(a,b)=>a.message===b.message&&a.results===b.results);
+},(a,b)=>a.message===b.message&&a.results===b.results&&a.thinkingExpanded===b.thinkingExpanded);
 
 interface StreamBlock { key: number; text: string }
 
@@ -182,11 +184,12 @@ const StreamingAnswer=memo(function StreamingAnswer({text,complete,onError}:{tex
  return <div className="assistant-markdown-renderer">{complete ? <Markdown text={text} onError={onError}/> : <StreamingMarkdown text={text} onError={onError}/>}</div>;
 },(a,b)=>a.text===b.text&&a.complete===b.complete);
 
-export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, startedAt, onFork, forkDisabled }: MessageListProps) {
+export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, onQuote, thinkingExpanded=false, startedAt, onFork, forkDisabled }: MessageListProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
   const previous = useRef({ taskKey, first: messages[0], height: 0 });
   const [atBottom, setAtBottom] = useState(true);
+  const [quote,setQuote]=useState('');
   const normalized = query.trim().toLowerCase();
   const visibleMessages = normalized ? messages.filter(message => JSON.stringify(message.content).toLowerCase().includes(normalized)) : messages;
   const lastUserIndex=messages.reduce((found,message,index)=>message.role==='user'?index:found,-1);
@@ -234,16 +237,23 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
     if (viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
     bottom.current = true; setAtBottom(true);
   };
+  const captureSelection=()=>{
+    const selection=window.getSelection(),element=viewport.current;
+    if(!selection||selection.isCollapsed||!element||!selection.anchorNode||!selection.focusNode||!element.contains(selection.anchorNode)||!element.contains(selection.focusNode)){setQuote('');return;}
+    setQuote(selection.toString().trim().slice(0,4000));
+  };
+  const jumpTurn=(index:number)=>viewport.current?.querySelector<HTMLElement>(`[data-chat-turn="${index}"]`)?.scrollIntoView({block:'start'});
   return <div className="relative min-h-0 flex-1">
     <div ref={viewport} role="region" aria-label="对话消息" tabIndex={0} className="h-full overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-ring"
+      onMouseUp={captureSelection}
       onScroll={() => { const e = viewport.current; if (!e) return; bottom.current = e.scrollHeight - e.scrollTop - e.clientHeight < 48; setAtBottom(bottom.current); }}>
       <div className="message-column">
         {hasMore && <div className="conversation-search"><Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button></div>}
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
         {!loading && messages.length === 0 && !liveText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
-        {transcript.map((item,index)=>item.user?<article key={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={`${taskKey}:${item.prompt?.timestamp??index}`} className="assistant-turn">
-          {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>{turnMetadata(item.original,item.prompt).durationMs === undefined?`执行过程 · ${item.activity.length}项`:`已执行 · ${item.activity.length}项 · ${durationLabel(turnMetadata(item.original,item.prompt).durationMs!)}`}</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i}>{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><MessageContent message={message} onError={onError}/></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError}/>}</div>)}</div></details>}
-          {item.answer.map((message,i)=><div key={i} className="assistant-body"><MessageContent message={message} onError={onError}/></div>)}
+        {transcript.map((item,index)=>item.user?<article key={index} data-chat-turn={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={`${taskKey}:${item.prompt?.timestamp??index}`} data-chat-turn={index} className="assistant-turn">
+          {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>{turnMetadata(item.original,item.prompt).durationMs === undefined?`执行过程 · ${item.activity.length}项`:`已执行 · ${item.activity.length}项 · ${durationLabel(turnMetadata(item.original,item.prompt).durationMs!)}`}</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i}>{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError} thinkingExpanded={thinkingExpanded}/>}</div>)}</div></details>}
+          {item.answer.map((message,i)=><div key={i} className="assistant-body"><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></div>)}
           <TurnFooter messages={item.original} answers={item.answer} user={item.prompt} onFork={onFork} forkDisabled={forkDisabled||running||loading} onError={onError}/>
         </section>)}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
@@ -254,6 +264,8 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
         </section>}
       </div>
     </div>
+    {transcript.length>2&&<nav className="chat-minimap" aria-label="对话导航">{transcript.map((item,index)=><button key={index} aria-label={`跳转到第 ${index+1} 段${item.user?'用户消息':'助手回复'}`} data-role={item.user?'user':'assistant'} onClick={()=>jumpTurn(index)}/>)}</nav>}
+    {quote&&onQuote&&<Button className="selection-follow-up" size="sm" variant="secondary" onClick={()=>{onQuote(quote);setQuote('');window.getSelection()?.removeAllRanges();}}><Quote/>引用到输入框</Button>}
     {!atBottom && <Button className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-sm" size="sm" variant="secondary" onClick={jump}><ArrowDown size={14} />回到底部</Button>}
   </div>;
 }

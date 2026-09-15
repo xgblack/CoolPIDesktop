@@ -6,7 +6,7 @@ use omp_rpc::{JsonlDecoder, MAX_FRAME, MAX_LOGICAL, encode_request};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -22,10 +22,103 @@ use uuid::Uuid;
 
 const EVENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TASKS: usize = 32;
+
+/// Commands with a typed response. This is the complete Host allowlist; adding
+/// an OMP command requires an explicit enum variant and state policy below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcQuery {
+    GetState,
+    GetMessagesPage,
+    SetModel,
+    GetSessionStats,
+    GetAvailableCommands,
+    GetLoginProviders,
+    LoginProvider,
+    GetSubagents,
+    GetSubagentMessages,
+    SetThinkingLevel,
+    SetSteeringMode,
+    SetFollowUpMode,
+    SetInterruptMode,
+    Compact,
+    SetAutoCompaction,
+    SetAutoRetry,
+    AbortRetry,
+    SetSubagentSubscription,
+}
+impl RpcQuery {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GetState => "get_state",
+            Self::GetMessagesPage => "get_messages_page",
+            Self::SetModel => "set_model",
+            Self::GetSessionStats => "get_session_stats",
+            Self::GetAvailableCommands => "get_available_commands",
+            Self::GetLoginProviders => "get_login_providers",
+            Self::LoginProvider => "login",
+            Self::GetSubagents => "get_subagents",
+            Self::GetSubagentMessages => "get_subagent_messages",
+            Self::SetThinkingLevel => "set_thinking_level",
+            Self::SetSteeringMode => "set_steering_mode",
+            Self::SetFollowUpMode => "set_follow_up_mode",
+            Self::SetInterruptMode => "set_interrupt_mode",
+            Self::Compact => "compact",
+            Self::SetAutoCompaction => "set_auto_compaction",
+            Self::SetAutoRetry => "set_auto_retry",
+            Self::AbortRetry => "abort_retry",
+            Self::SetSubagentSubscription => "set_subagent_subscription",
+        }
+    }
+    fn allowed_while_active(self) -> bool {
+        matches!(
+            self,
+            Self::GetState
+                | Self::GetLoginProviders
+                | Self::GetSubagents
+                | Self::GetSubagentMessages
+                | Self::AbortRetry
+        )
+    }
+    fn deadline(self) -> Duration {
+        if self == Self::LoginProvider {
+            Duration::from_secs(10 * 60)
+        } else {
+            DEADLINE
+        }
+    }
+}
+
+/// Session actions are kept separate because they affect the Host lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcRequest {
+    Prompt,
+    Steer,
+    FollowUp,
+    Abort,
+    AbortAndPrompt,
+    ExtensionUiResponse,
+    SetSessionName,
+}
+impl RpcRequest {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Steer => "steer",
+            Self::FollowUp => "follow_up",
+            Self::Abort => "abort",
+            Self::AbortAndPrompt => "abort_and_prompt",
+            Self::ExtensionUiResponse => "extension_ui_response",
+            Self::SetSessionName => "set_session_name",
+        }
+    }
+}
 pub(crate) fn validate_approval_mode(mode: Option<&str>) -> Result<()> {
     match mode {
         None | Some("always-ask" | "write" | "yolo") => Ok(()),
-        _ => Err(HostError::new("invalid_approval_mode", "Unknown approval mode")),
+        _ => Err(HostError::new(
+            "invalid_approval_mode",
+            "Unknown approval mode",
+        )),
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,8 +129,8 @@ pub struct HostEvent {
     pub seq: u64,
     pub event_type: String,
     pub payload: Value,
-    #[serde(default, skip_serializing_if="Vec::is_empty")]
-    pub trajectory:Vec<crate::trajectory_history::Record>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trajectory: Vec<crate::trajectory_history::Record>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +168,22 @@ pub struct UsageSummary {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct QueuedMessage {
+    pub id: String,
+    pub kind: String,
+    pub message: String,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionUiState {
+    pub statuses: BTreeMap<String, String>,
+    pub widgets: BTreeMap<String, Value>,
+    pub title: Option<String>,
+    pub editor_text: Option<String>,
+    pub open_url: Option<Value>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskSnapshot {
     #[serde(default)]
     pub turn_started_at: Option<f64>,
@@ -93,9 +202,21 @@ pub struct TaskSnapshot {
     #[serde(default)]
     pub tools: Vec<ToolActivity>,
     #[serde(default)]
-    pub trajectory:Vec<crate::trajectory_history::Record>,
+    pub trajectory: Vec<crate::trajectory_history::Record>,
     #[serde(default)]
     pub usage: UsageSummary,
+    #[serde(default)]
+    pub available_commands: Vec<Value>,
+    #[serde(default)]
+    pub authoritative_queued_count: u64,
+    #[serde(default)]
+    pub queued_messages: Vec<QueuedMessage>,
+    #[serde(default)]
+    pub subagents: Vec<Value>,
+    #[serde(default)]
+    pub extension_ui: ExtensionUiState,
+    #[serde(skip)]
+    status_before_ui: Option<String>,
 }
 fn bounded_value(value: &Value) -> Value {
     const LIMIT: usize = 64 * 1024;
@@ -123,10 +244,89 @@ fn update_usage(snapshot: &mut TaskSnapshot, typ: &str, data: &Value) {
         snapshot.usage.cost = data["cost"].as_f64();
     }
 }
+fn update_state(snapshot: &mut TaskSnapshot, data: &Value) {
+    let count = data["queuedMessageCount"].as_u64().unwrap_or(0);
+    snapshot.authoritative_queued_count = count;
+    if count != snapshot.queued_messages.len() as u64 {
+        snapshot.queued_messages.clear();
+    }
+    snapshot.runtime.capabilities["state"] = data.clone();
+}
+fn update_subagent(snapshot: &mut TaskSnapshot, frame: &Value) {
+    let payload = &frame["payload"];
+    let Some(id) = payload
+        .get("id")
+        .or_else(|| payload.get("subagentId"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    if let Some(current) = snapshot.subagents.iter_mut().find(|value| {
+        value
+            .get("id")
+            .or_else(|| value.get("subagentId"))
+            .and_then(Value::as_str)
+            == Some(id)
+    }) {
+        if let (Some(target), Some(update)) = (current.as_object_mut(), payload.as_object()) {
+            target.extend(update.clone());
+        }
+    } else if snapshot.subagents.len() < 128 {
+        snapshot.subagents.push(payload.clone());
+    } else {
+        snapshot.truncated = true;
+    }
+}
+fn update_extension_ui(snapshot: &mut TaskSnapshot, frame: &Value) {
+    match frame["method"].as_str() {
+        Some("setStatus") => {
+            let Some(key) = frame["statusKey"].as_str() else {
+                return;
+            };
+            if let Some(text) = frame["statusText"].as_str() {
+                snapshot
+                    .extension_ui
+                    .statuses
+                    .insert(key.into(), text.into());
+            } else {
+                snapshot.extension_ui.statuses.remove(key);
+            }
+        }
+        Some("setWidget") => {
+            let Some(key) = frame["widgetKey"].as_str() else {
+                return;
+            };
+            if frame["widgetLines"].is_array() {
+                snapshot
+                    .extension_ui
+                    .widgets
+                    .insert(key.into(), frame.clone());
+            } else {
+                snapshot.extension_ui.widgets.remove(key);
+            }
+        }
+        Some("setTitle") => {
+            snapshot.extension_ui.title = frame["title"].as_str().map(str::to_owned)
+        }
+        Some("set_editor_text") => {
+            snapshot.extension_ui.editor_text = frame["text"].as_str().map(str::to_owned)
+        }
+        Some("open_url") => snapshot.extension_ui.open_url = Some(frame.clone()),
+        _ => {}
+    }
+}
 fn update_session_name(snapshot: &mut TaskSnapshot, event: &Value) {
-    let Some(name) = event.get("sessionName").or_else(|| event.get("name")).and_then(Value::as_str) else { return; };
+    let Some(name) = event
+        .get("sessionName")
+        .or_else(|| event.get("name"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
     if let Some(state) = snapshot.runtime.capabilities.get_mut("state") {
-        if let Some(object) = state.as_object_mut() { object.insert("sessionName".into(), Value::String(name.into())); }
+        if let Some(object) = state.as_object_mut() {
+            object.insert("sessionName".into(), Value::String(name.into()));
+        }
     }
 }
 fn update_tool(snapshot: &mut TaskSnapshot, typ: &str, event: &Value) {
@@ -191,13 +391,25 @@ fn update_tool(snapshot: &mut TaskSnapshot, typ: &str, event: &Value) {
 }
 impl TaskSnapshot {
     fn event(&mut self, typ: &str, mut payload: Value) -> HostEvent {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0;
         if typ == "user_message" {
             self.turn_started_at = Some(now);
             self.turn_completed_at = None;
             self.tools.clear();
             payload["timestamp"] = json!(now);
-        } else if (typ == "error" || typ == "status" && matches!(payload["status"].as_str(), Some("idle" | "interrupted" | "stopped" | "failed"))) && self.turn_started_at.is_some() && self.turn_completed_at.is_none() {
+        } else if (typ == "error"
+            || typ == "status"
+                && matches!(
+                    payload["status"].as_str(),
+                    Some("idle" | "interrupted" | "stopped" | "failed")
+                ))
+            && self.turn_started_at.is_some()
+            && self.turn_completed_at.is_none()
+        {
             self.turn_completed_at = Some(now);
             payload["completedAt"] = json!(now);
         }
@@ -207,14 +419,25 @@ impl TaskSnapshot {
             run_id: self.run_id.clone(),
             seq: self.seq,
             event_type: typ.into(),
-            trajectory:crate::trajectory_live::update(&mut self.trajectory,&self.run_id,self.seq,typ,&payload,std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()*1000.0),
+            trajectory: crate::trajectory_live::update(
+                &mut self.trajectory,
+                &self.run_id,
+                self.seq,
+                typ,
+                &payload,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+                    * 1000.0,
+            ),
             payload,
         };
         if serde_json::to_vec(&event).map_or(usize::MAX, |v| v.len()) > EVENT_BYTES / 2 {
             event.payload = json!({"truncated":true,"message":"Event exceeds display buffer; original session remains in OMP"});
             self.truncated = true;
         }
-        let mut diagnostic=event.clone();
+        let mut diagnostic = event.clone();
         diagnostic.trajectory.clear();
         self.events.push_back(diagnostic);
         while self.events.len() > 256
@@ -246,12 +469,12 @@ struct Task {
 }
 enum Action {
     Query {
-        typ: &'static str,
+        command: RpcQuery,
         payload: Value,
         reply: oneshot::Sender<Result<Value>>,
     },
     Request {
-        typ: &'static str,
+        command: RpcRequest,
         payload: Value,
         reply: oneshot::Sender<Result<()>>,
     },
@@ -350,7 +573,13 @@ impl TaskManager {
     ) -> Result<TaskSnapshot> {
         self.start_with_lease(id, explicit, options, None).await
     }
-    pub async fn start_with_lease(&self, id:String, explicit:Option<String>, options:LaunchOptions, lease:Option<crate::writer_lock::WriterLease>)->Result<TaskSnapshot> {
+    pub async fn start_with_lease(
+        &self,
+        id: String,
+        explicit: Option<String>,
+        options: LaunchOptions,
+        lease: Option<crate::writer_lock::WriterLease>,
+    ) -> Result<TaskSnapshot> {
         if id.is_empty()
             || id.len() > 80
             || !id
@@ -401,6 +630,12 @@ impl TaskManager {
             tools: Vec::new(),
             trajectory: Vec::new(),
             usage: UsageSummary::default(),
+            available_commands: Vec::new(),
+            authoritative_queued_count: 0,
+            queued_messages: Vec::new(),
+            subagents: Vec::new(),
+            extension_ui: ExtensionUiState::default(),
+            status_before_ui: None,
             turn_started_at: None,
             turn_completed_at: None,
         }));
@@ -434,7 +669,10 @@ impl TaskManager {
     }
     pub(crate) async fn publish_event(&self, id: &str, typ: &str, payload: Value) -> Result<()> {
         let map = self.tasks.read().await;
-        let snapshot = map.get(id).map(|task| task.snapshot.clone()).ok_or_else(|| HostError::new("task_not_found", id))?;
+        let snapshot = map
+            .get(id)
+            .map(|task| task.snapshot.clone())
+            .ok_or_else(|| HostError::new("task_not_found", id))?;
         drop(map);
         let mut snapshot = snapshot.write().await;
         let event = snapshot.event(typ, payload);
@@ -453,23 +691,18 @@ impl TaskManager {
         self.snapshots.write().await.remove(id);
         Ok(())
     }
-    pub async fn query(&self, id: &str, typ: &'static str, payload: Value) -> Result<Value> {
-        if !matches!(
-            typ,
-            "get_state" | "get_messages_page" | "set_model" | "get_session_stats"
-        ) {
-            return Err(HostError::new("forbidden_command", typ));
-        }
+    pub async fn query(&self, id: &str, command: RpcQuery, payload: Value) -> Result<Value> {
+        let deadline = command.deadline();
         let (reply, done) = oneshot::channel();
         self.sender(id)
             .await?
             .try_send(Action::Query {
-                typ,
+                command,
                 payload,
                 reply,
             })
             .map_err(|_| HostError::new("task_busy", "Command queue unavailable"))?;
-        timeout(DEADLINE * 2, done)
+        timeout(deadline + DEADLINE, done)
             .await
             .map_err(|_| HostError::new("timeout", "Query timed out"))?
             .map_err(|_| HostError::new("process_exited", "Task stopped"))?
@@ -501,14 +734,11 @@ impl TaskManager {
             .map_err(|_| HostError::new("timeout", "Stop timed out"))?
             .map_err(|_| HostError::new("process_exited", "Task stopped"))?
     }
-    pub async fn request(&self, id: &str, typ: &'static str, payload: Value) -> Result<()> {
-        if !matches!(typ, "prompt" | "abort" | "extension_ui_response" | "set_session_name") {
-            return Err(HostError::new("forbidden_command", typ));
-        }
+    pub async fn request(&self, id: &str, command: RpcRequest, payload: Value) -> Result<()> {
         let tx = self.sender(id).await?;
         let (reply, done) = oneshot::channel();
         tx.try_send(Action::Request {
-            typ,
+            command,
             payload,
             reply,
         })
@@ -592,7 +822,10 @@ impl Wire {
         }
         if let Some(thinking) = &options.thinking {
             if !crate::model_config::THINKING_LEVELS.contains(&thinking.as_str()) {
-                return Err(HostError::new("model_thinking_unavailable", "Invalid thinking level"));
+                return Err(HostError::new(
+                    "model_thinking_unavailable",
+                    "Invalid thinking level",
+                ));
             }
             command.arg("--thinking").arg(thinking);
         }
@@ -802,7 +1035,8 @@ impl Wire {
         }
         let models = self.query("get_available_models", json!({})).await?;
         let commands = self.query("get_available_commands", json!({})).await?;
-        self.query("set_subagent_subscription",json!({"level":"events"})).await?;
+        self.query("set_subagent_subscription", json!({"level":"events"}))
+            .await?;
         if !models["models"].is_array() || !commands["commands"].is_array() {
             return Err(HostError::new(
                 "capability_query_failed",
@@ -842,12 +1076,12 @@ impl Drop for Wire {
 }
 
 struct Pending {
-    typ: &'static str,
+    command: RpcRequest,
     deadline: Instant,
     reply: Option<oneshot::Sender<Result<()>>>,
 }
-fn non_fatal_request(typ: &str) -> bool {
-    typ == "set_session_name"
+fn non_fatal_request(command: RpcRequest) -> bool {
+    command == RpcRequest::SetSessionName
 }
 async fn run(
     path: PathBuf,
@@ -860,7 +1094,12 @@ async fn run(
     let startup = async {
         let info = runtime::probe(&path).await?;
         let mut wire = Wire::spawn_with(&path, &options).await?;
-        if let (Some(lease),Some(pid))=(lease.as_mut(),wire.child.id()) {if let Err(e)=lease.set_pid(pid){wire.close().await?;return Err(e);}}
+        if let (Some(lease), Some(pid)) = (lease.as_mut(), wire.child.id()) {
+            if let Err(e) = lease.set_pid(pid) {
+                wire.close().await?;
+                return Err(e);
+            }
+        }
         match wire.initialize(info).await {
             Ok(info) => {
                 if let Some(expected) = &options.expected_session {
@@ -895,7 +1134,12 @@ async fn run(
         s.runtime = info;
         if let Some(state) = s.runtime.capabilities.get("state").cloned() {
             update_usage(&mut s, "get_state", &state);
+            update_state(&mut s, &state);
         }
+        s.available_commands = s.runtime.capabilities["commands"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let event = s.event("process_started", json!({"pid":wire.child.id()}));
         broker.publish(event);
         let event = s.status("ready");
@@ -911,15 +1155,17 @@ async fn run(
     loop {
         tokio::select! {
             action=actions.recv()=>match action {
-                Some(Action::Query{typ,payload,reply})=>{
+                Some(Action::Query{command,payload,reply})=>{
                     let status=snapshot.read().await.status.clone();
-                    if !matches!(status.as_str(),"ready"|"idle"|"interrupted") {let _=reply.send(Err(HostError::new("session_busy","Task is not idle")));continue;}
-                    match wire.send(typ,payload).await {Ok(id)=>{queries.insert(id,(typ,Instant::now()+DEADLINE,reply));},Err(e)=>{let _=reply.send(Err(e));}}
+                    if !matches!(status.as_str(),"ready"|"idle"|"interrupted") && !command.allowed_while_active() {let _=reply.send(Err(HostError::new("session_busy","Command is not allowed in the current task state")));continue;}
+                    let typ=command.as_str();
+                    match wire.send(typ,payload).await {Ok(id)=>{queries.insert(id,(typ,Instant::now()+command.deadline(),reply));},Err(e)=>{let _=reply.send(Err(e));}}
                 },
                 Some(Action::Stop(reply))=>{stop_reply=Some(reply);break;},
                 None=>break,
-                Some(Action::Request{typ,payload,reply})=>{
-                    if typ=="extension_ui_response" {
+                Some(Action::Request{command,payload,reply})=>{
+                    let typ=command.as_str();
+                    if command==RpcRequest::ExtensionUiResponse {
                         let mut s=snapshot.write().await;
                         let id=payload["id"].as_str().unwrap_or_default();
                         let Some(pos)=s.pending_ui.iter().position(|v|v["id"]==id) else {let _=reply.send(Err(HostError::new("invalid_ui_request","UI request expired or unknown")));continue;};
@@ -931,19 +1177,26 @@ async fn run(
                         let mut bytes=serde_json::to_vec(&body).unwrap();bytes.push(b'\n');
                         if bytes.len()>wire.max_frame {let _=reply.send(Err(HostError::new("invalid_request","UI response too large")));continue;}
                         let result=timeout(DEADLINE,wire.stdin.write_all(&bytes)).await.map_err(|_|HostError::new("timeout","UI response write timed out")).and_then(|r|r.map_err(|e|HostError::new("process_exited",e)));
-                        if result.is_ok(){s.pending_ui.remove(pos);let event=s.event("ui_response",json!({"id":id}));broker.publish(event);}
+                        if result.is_ok(){s.pending_ui.remove(pos);if s.pending_ui.is_empty()&&s.status=="pending_ui"{let restored=s.status_before_ui.take().unwrap_or_else(||"running".into());let event=s.status(&restored);broker.publish(event);}let event=s.event("ui_response",json!({"id":id}));broker.publish(event);}
                         let _=reply.send(result);continue;
                     }
                     let status=snapshot.read().await.status.clone();
-                    if typ=="prompt" && !matches!(status.as_str(),"ready"|"idle"|"interrupted") {let _=reply.send(Err(HostError::new("task_busy","Task is not idle")));continue;}
-                    if typ=="prompt" && payload["message"].as_str().is_none_or(|s|s.trim().is_empty()) {let _=reply.send(Err(HostError::new("invalid_request","Message is empty")));continue;}
-                    if typ=="abort" && status!="running" {let _=reply.send(Err(HostError::new("task_busy","Task is not running")));continue;}
+                    let idle=matches!(status.as_str(),"ready"|"idle"|"interrupted");
+                    let active=matches!(status.as_str(),"running"|"compacting"|"retrying"|"pending_ui");
+                    if command==RpcRequest::Prompt && !idle && !(active && matches!(payload["streamingBehavior"].as_str(),Some("steer"|"followUp"))) {let _=reply.send(Err(HostError::new("task_busy","Prompt requires an idle task or an explicit streaming behavior")));continue;}
+                    if matches!(command,RpcRequest::Prompt|RpcRequest::Steer|RpcRequest::FollowUp|RpcRequest::AbortAndPrompt) && payload["message"].as_str().is_none_or(|s|s.trim().is_empty()) {let _=reply.send(Err(HostError::new("invalid_request","Message is empty")));continue;}
+                    if matches!(command,RpcRequest::Steer|RpcRequest::FollowUp|RpcRequest::Abort|RpcRequest::AbortAndPrompt) && !active {let _=reply.send(Err(HostError::new("task_busy","Command requires an active task")));continue;}
                     if pending.len()>=16 {let _=reply.send(Err(HostError::new("task_busy","Too many pending commands")));continue;}
                     match wire.send(typ,payload.clone()).await {
                         Ok(id)=>{
-                            if typ=="prompt" {active_prompt=Some(id.clone());aborting=false;let mut s=snapshot.write().await;s.text.clear();let event=s.status("running");broker.publish(event);let event=s.event("user_message",json!({"text":payload["message"]}));broker.publish(event);}
-                            if typ=="abort"{aborting=true;}
-                            pending.insert(id,Pending{typ,deadline:Instant::now()+DEADLINE,reply:Some(reply)});
+                            if matches!(command,RpcRequest::Prompt|RpcRequest::AbortAndPrompt) && idle {active_prompt=Some(id.clone());aborting=false;let mut s=snapshot.write().await;s.text.clear();let event=s.status("running");broker.publish(event);let event=s.event("user_message",json!({"text":payload["message"]}));broker.publish(event);}
+                            if matches!(command,RpcRequest::Abort|RpcRequest::AbortAndPrompt){aborting=true;}
+                            if matches!(command,RpcRequest::Steer|RpcRequest::FollowUp) || command==RpcRequest::Prompt && active {
+                                let mut s=snapshot.write().await;
+                                s.queued_messages.push(QueuedMessage{id:id.clone(),kind:typ.into(),message:payload["message"].as_str().unwrap_or_default().into()});
+                                let event=s.event("queued_message",json!({"command":typ,"message":payload["message"]}));broker.publish(event);
+                            }
+                            pending.insert(id,Pending{command,deadline:Instant::now()+DEADLINE,reply:Some(reply)});
                         },
                         Err(e)=>{let _=reply.send(Err(e.clone()));let event=snapshot.write().await.fail(e);broker.publish(event);break;}
                     }
@@ -957,22 +1210,32 @@ async fn run(
                     let id=v["id"].as_str().unwrap_or_default();
                     if let Some((command,_,reply))=queries.remove(id) {
                         let result=if v["command"]!=command {Err(HostError::new("protocol_error","Query command mismatch"))}else if v["success"]==true {Ok(v["data"].clone())}else{Err(HostError::new(v["code"].as_str().unwrap_or("request_failed"),v["error"].as_str().unwrap_or("Query failed")))};
-                        if let Ok(data)=&result {let mut s=snapshot.write().await;if command=="get_state" {s.runtime.capabilities["state"]=data.clone();} update_usage(&mut s,command,data);}
+                        if let Ok(data)=&result {
+                            let mut s=snapshot.write().await;
+                            match command {
+                                "get_state" => update_state(&mut s, data),
+                                "get_available_commands" => s.available_commands=data["commands"].as_array().cloned().unwrap_or_default(),
+                                "get_subagents" => s.subagents=data["subagents"].as_array().cloned().unwrap_or_default(),
+                                _ => {}
+                            }
+                            update_usage(&mut s,command,data);
+                        }
                         let _=reply.send(result);continue;
                     }
                     if let Some(p)=pending.get_mut(id) {
-                        if v["command"]!=p.typ {let event=snapshot.write().await.fail(HostError::new("protocol_error","Response command mismatch"));broker.publish(event);break;}
-                        let result=if v["success"]==true {Ok(())}else{Err(HostError::new("request_failed",v["error"].as_str().unwrap_or("OMP rejected request")))};
+                        if v["command"]!=p.command.as_str() {let event=snapshot.write().await.fail(HostError::new("protocol_error","Response command mismatch"));broker.publish(event);break;}
+                        let result=if v["success"]==true {Ok(())}else{Err(HostError::new(v["code"].as_str().unwrap_or("request_failed"),v["error"].as_str().unwrap_or("OMP rejected request")))};
                         if let Some(reply)=p.reply.take(){let _=reply.send(result.clone());}
                         if let Err(e)=result {
-                            if non_fatal_request(p.typ) {
-                                let event=snapshot.write().await.event("protocol_warning",json!({"message":"OMP rejected a non-critical command","command":p.typ}));broker.publish(event);
+                            snapshot.write().await.queued_messages.retain(|message|message.id!=id);
+                            if non_fatal_request(p.command) {
+                                let event=snapshot.write().await.event("protocol_warning",json!({"message":"OMP rejected a non-critical command","command":p.command.as_str()}));broker.publish(event);
                             } else {
                                 let event=snapshot.write().await.fail(e);broker.publish(event);if active_prompt.as_deref()==Some(id){active_prompt=None;}
                             }
                         }
-                        if p.typ!="prompt" || v["success"]!=true || v["data"]["agentInvoked"]==false {
-                            if p.typ=="prompt" && v["success"]==true {let event=snapshot.write().await.status("idle");broker.publish(event);active_prompt=None;}
+                        if p.command!=RpcRequest::Prompt || v["success"]!=true || v["data"]["agentInvoked"]==false {
+                            if p.command==RpcRequest::Prompt && v["success"]==true {let event=snapshot.write().await.status("idle");broker.publish(event);active_prompt=None;}
                             pending.remove(id);
                         } else {p.deadline=Instant::now()+Duration::from_secs(86400);}
                     } else {let event=snapshot.write().await.event("protocol_warning",json!({"message":"Uncorrelated response","id":id}));broker.publish(event);}
@@ -984,21 +1247,30 @@ async fn run(
                 if typ=="agent_end" && v["isTerminal"]!=false {
                     // Keep ACK correlation until it arrives even if agent_end precedes it.
                     if let Some(id)=active_prompt.take(){if pending.get(&id).is_some_and(|p|p.reply.is_none()){pending.remove(&id);}}
-                    let mut s=snapshot.write().await;s.pending_ui.clear();let event=s.status(if aborting{"interrupted"}else{"idle"});broker.publish(event);aborting=false;
+                    let mut s=snapshot.write().await;s.pending_ui.clear();s.status_before_ui=None;let event=s.status(if aborting{"interrupted"}else{"idle"});broker.publish(event);aborting=false;
                 }
+                if typ=="agent_start" {let event=snapshot.write().await.status("running");broker.publish(event);}
+                if typ=="auto_compaction_start" {let event=snapshot.write().await.status("compacting");broker.publish(event);}
+                if typ=="auto_compaction_end" {let status=if active_prompt.is_some(){"running"}else{"idle"};let event=snapshot.write().await.status(status);broker.publish(event);}
+                if typ=="auto_retry_start" {let event=snapshot.write().await.status("retrying");broker.publish(event);}
+                if typ=="auto_retry_end" {let status=if active_prompt.is_some(){"running"}else{"idle"};let event=snapshot.write().await.status(status);broker.publish(event);}
                 if typ=="message_update" && v["assistantMessageEvent"]["type"]=="text_delta" {
                     if let Some(delta)=v["assistantMessageEvent"]["delta"].as_str(){let mut s=snapshot.write().await;s.text.push_str(delta);if s.text.len()>EVENT_BYTES {let mut cut=s.text.len()-EVENT_BYTES;while !s.text.is_char_boundary(cut){cut+=1;}s.text.drain(..cut);s.truncated=true;}}
                 }
                 if typ=="extension_ui_request" {
                     let mut s=snapshot.write().await;
-                    if v["method"]=="cancel" {s.pending_ui.retain(|p|p["id"]!=v["id"]);}
+                    if v["method"]=="cancel" {s.pending_ui.retain(|p|p["id"]!=v["targetId"]);if s.pending_ui.is_empty()&&s.status=="pending_ui"{let restored=s.status_before_ui.take().unwrap_or_else(||"running".into());let event=s.status(&restored);broker.publish(event);}}
                     else if matches!(v["method"].as_str(),Some("confirm"|"select"|"input"|"editor")) {
                         if s.pending_ui.len()>=16 {let event=s.fail(HostError::new("ui_limit","Too many UI requests"));broker.publish(event);break;}
+                        if s.pending_ui.is_empty(){s.status_before_ui=Some(s.status.clone());let event=s.status("pending_ui");broker.publish(event);}
                         s.pending_ui.push(v.clone());
                     }
+                    else {update_extension_ui(&mut s,&v);}
                 }
                 let mut s=snapshot.write().await;
                 if typ == "session_info_update" { update_session_name(&mut s, &v); }
+                if typ == "available_commands_update" {s.available_commands=v["commands"].as_array().cloned().unwrap_or_default();s.runtime.capabilities["commands"]=json!(s.available_commands);}
+                if matches!(typ,"subagent_lifecycle"|"subagent_progress"|"subagent_event") {update_subagent(&mut s,&v);}
                 let event=s.event(typ,v.clone());
                 update_tool(&mut s,typ,&v);
                 broker.publish(event);
@@ -1008,7 +1280,7 @@ async fn run(
                 for id in expired {if let Some((_,_,reply))=queries.remove(&id){let _=reply.send(Err(HostError::new("timeout","Query response timed out")));}}
                 if let Some(id)=pending.iter().find(|(_,p)|p.reply.is_some()&&p.deadline<=Instant::now()).map(|(id,_)|id.clone()) {
                     let e=HostError::new("timeout",format!("OMP did not respond to {id}"));
-                    if pending.get(&id).is_some_and(|request| non_fatal_request(request.typ)) {
+                    if pending.get(&id).is_some_and(|request| non_fatal_request(request.command)) {
                         if let Some(mut request)=pending.remove(&id) {if let Some(reply)=request.reply.take(){let _=reply.send(Err(e));}}
                         let event=snapshot.write().await.event("protocol_warning",json!({"message":"OMP did not respond to a non-critical command","command":"set_session_name"}));broker.publish(event);
                     } else {
@@ -1078,6 +1350,12 @@ mod tests {
             tools: Vec::new(),
             trajectory: Vec::new(),
             usage: UsageSummary::default(),
+            available_commands: Vec::new(),
+            authoritative_queued_count: 0,
+            queued_messages: Vec::new(),
+            subagents: Vec::new(),
+            extension_ui: ExtensionUiState::default(),
+            status_before_ui: None,
             turn_started_at: None,
             turn_completed_at: None,
         }
@@ -1088,9 +1366,16 @@ mod tests {
         let start = state.event("user_message", json!({"text":"hello"}));
         assert_eq!(start.payload["timestamp"].as_f64(), state.turn_started_at);
         let anchor = state.turn_started_at;
-        for _ in 0..300 { state.event("message_update", json!({})); }
+        for _ in 0..300 {
+            state.event("message_update", json!({}));
+        }
         assert_eq!(state.turn_started_at, anchor);
-        assert!(!state.events.iter().any(|event| event.event_type == "user_message"));
+        assert!(
+            !state
+                .events
+                .iter()
+                .any(|event| event.event_type == "user_message")
+        );
         let end = state.status("interrupted");
         assert_eq!(end.payload["completedAt"].as_f64(), state.turn_completed_at);
         let completed = state.turn_completed_at;
@@ -1151,12 +1436,20 @@ mod tests {
         let mut state = snapshot();
         state.runtime.capabilities = json!({"state":{"sessionName":"Initial"}});
         update_session_name(&mut state, &json!({"sessionName":"Generated"}));
-        assert_eq!(state.runtime.capabilities["state"]["sessionName"], "Generated");
+        assert_eq!(
+            state.runtime.capabilities["state"]["sessionName"],
+            "Generated"
+        );
     }
     #[test]
     fn classifies_session_name_as_non_fatal() {
-        assert!(non_fatal_request("set_session_name"));
-        assert!(!non_fatal_request("prompt"));
-        assert!(!non_fatal_request("abort"));
+        assert!(non_fatal_request(RpcRequest::SetSessionName));
+        assert!(!non_fatal_request(RpcRequest::Prompt));
+        assert!(!non_fatal_request(RpcRequest::Abort));
+    }
+    #[test]
+    fn provider_login_has_a_bounded_interactive_deadline() {
+        assert_eq!(RpcQuery::GetLoginProviders.deadline(), DEADLINE);
+        assert_eq!(RpcQuery::LoginProvider.deadline(), Duration::from_secs(600));
     }
 }

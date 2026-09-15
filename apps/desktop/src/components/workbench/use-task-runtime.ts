@@ -27,5 +27,5 @@ export function runtimeLabel(info?:RuntimeTaskInfo,pendingApproval=false){
  if(info.owner==='terminal')return '终端接管中';
  if(info.autoStartSuppressed&&info.status==='stopped')return '已手动停止';
  if(pendingApproval)return '等待审批';
- return {starting:'正在启动',ready:'已就绪',idle:'已就绪',running:'生成中',interrupted:'已就绪',stopped:'已停止',failed:'启动失败',external:'终端接管中',unknown:'状态未知'}[info.status];
+ return {starting:'正在启动',ready:'已就绪',idle:'已就绪',running:'生成中',compacting:'压缩中',retrying:'重试中',pending_ui:'等待输入',recovering:'恢复中',interrupted:'已就绪',stopping:'停止中',stopped:'已停止',failed:'启动失败',external:'终端接管中',unknown:'状态未知'}[info.status];
 }

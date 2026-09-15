@@ -18,7 +18,7 @@ Git/worktree、文件工作台、集成终端、完整独立网页端和 OMP 安
 - macOS，已安装 Xcode Command Line Tools（`xcode-select --install`）。
 - Rust 工具链（支持 Edition 2024），Node.js 22.12+ 或更新的兼容版本。
 - pnpm 10.23.0（版本声明见 `package.json`）。
-- 系统安装的 OMP。代码最低接受版本为 18.1.14，当前集成验证基线为 18.1.15。
+- 系统安装的 OMP。代码最低接受版本和当前集成基线均为 18.1.20。
 
 在仓库根目录安装依赖并检查工具：
 

@@ -82,7 +82,11 @@ async fn unsaved_session_and_pending_approval_are_not_interrupted() {
             "session_not_saved"
         );
         worker
-            .request(&id, "prompt", json!({"message":"approval"}))
+            .request(
+                &id,
+                host_core::RpcRequest::Prompt,
+                json!({"message":"approval"}),
+            )
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {

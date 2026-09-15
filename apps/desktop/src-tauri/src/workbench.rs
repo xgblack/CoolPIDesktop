@@ -5,13 +5,83 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 type Result<T> = std::result::Result<T, HostError>;
 
+fn capability_manifest() -> Value {
+    serde_json::json!({
+        "hostVersion": env!("CARGO_PKG_VERSION"),
+        "minimumOmpVersion": host_core::MIN_VERSION,
+        "transport": "desktop",
+        "features": {
+            "projects": "supported",
+            "tasks": "supported",
+            "sessionResume": "supported",
+            "sessionHistory": "supported",
+            "sessionExport": "supported",
+            "sessionFork": "supported",
+            "models": "supported",
+            "modelRoles": "supported",
+            "thinking": "supported",
+            "files": "supported",
+            "attachments": "supported",
+            "git": "supported",
+            "worktrees": "supported",
+            "terminal": "supported",
+            "trajectory": "supported",
+            "runtimeManagement": "supported",
+            "autoTitle": "supported",
+            "openInApp": "supported",
+            "sessionCatalog": "supported",
+            "browserTransport": "unsupported",
+            "providerLogin": "supported",
+            "providerLogout": "supported",
+            "providerUsage": "supported",
+            "skills": "unsupported",
+            "plugins": "supported",
+            "subagents": "supported",
+            "agentProfiles": "supported",
+            "extensionUi": "supported"
+        },
+        "runtimeCommands": {
+            "prompt": "supported",
+            "abort": "supported",
+            "extensionUiResponse": "supported",
+            "setSessionName": "supported",
+            "getState": "supported",
+            "getMessagesPage": "supported",
+            "setModel": "supported",
+            "getSessionStats": "supported",
+            "steer": "supported",
+            "followUp": "supported",
+            "abortAndPrompt": "supported",
+            "compact": "supported",
+            "retry": "supported",
+            "setThinkingLevel": "supported",
+            "subagentSubscription": "supported",
+            "navigateTree": "unsupported"
+        },
+        "platform": {
+            "desktop": true,
+            "browser": false,
+            "notifications": "unknown",
+            "updater": "unsupported"
+        }
+    })
+}
+
+#[tauri::command]
+async fn host_capabilities() -> Value {
+    capability_manifest()
+}
+
 #[tauri::command]
 async fn open_in_app_apps(refresh: bool) -> Vec<host_core::open_in_app::OpenApp> {
     host_core::open_in_app::list(refresh).await
 }
 #[tauri::command]
 async fn open_in_app_icon(app: tauri::AppHandle, app_id: String) -> Result<String> {
-    let cache = app.path().app_cache_dir().map_err(|_| HostError::new("app_icon_cache", "无法定位应用图标缓存"))?;
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|_| HostError::new("app_icon_cache", "无法定位应用图标缓存"))?;
     host_core::open_in_app::icon(&app_id, &cache).await
 }
 #[tauri::command]
@@ -20,73 +90,175 @@ async fn open_in_app(w: State<'_, Workbench>, task_id: String, app_id: String) -
 }
 
 #[tauri::command]
-async fn runtime_tasks(w:State<'_,Workbench>)->Result<Vec<host_core::lifecycle::RuntimeTaskInfo>>{w.runtime_tasks().await}
+async fn runtime_tasks(
+    w: State<'_, Workbench>,
+) -> Result<Vec<host_core::lifecycle::RuntimeTaskInfo>> {
+    w.runtime_tasks().await
+}
 #[tauri::command]
-async fn runtime_focus(w:State<'_,Workbench>,task_id:Option<String>)->Result<()>{w.runtime_focus(task_id).await}
+async fn runtime_focus(w: State<'_, Workbench>, task_id: Option<String>) -> Result<()> {
+    w.runtime_focus(task_id).await
+}
 #[tauri::command]
-async fn runtime_keep_alive(w:State<'_,Workbench>,task_id:String,keep_alive:bool)->Result<()>{w.runtime_keep_alive(&task_id,keep_alive).await}
+async fn runtime_keep_alive(
+    w: State<'_, Workbench>,
+    task_id: String,
+    keep_alive: bool,
+) -> Result<()> {
+    w.runtime_keep_alive(&task_id, keep_alive).await
+}
 #[tauri::command]
-async fn runtime_action(w:State<'_,Workbench>,task_id:String,action:String,expected_run_id:Option<String>)->Result<host_core::lifecycle::RuntimeTaskInfo>{w.runtime_action(&task_id,&action,expected_run_id).await}
+async fn runtime_action(
+    w: State<'_, Workbench>,
+    task_id: String,
+    action: String,
+    expected_run_id: Option<String>,
+) -> Result<host_core::lifecycle::RuntimeTaskInfo> {
+    w.runtime_action(&task_id, &action, expected_run_id).await
+}
 #[tauri::command]
-async fn runtime_release_idle(w:State<'_,Workbench>)->Result<Vec<String>>{w.runtime_release_idle(true).await}
+async fn runtime_release_idle(w: State<'_, Workbench>) -> Result<Vec<String>> {
+    w.runtime_release_idle(true).await
+}
 #[tauri::command]
-async fn runtime_command(w:State<'_,Workbench>,task_id:String)->Result<host_core::lifecycle::RuntimeCommand>{w.runtime_command(&task_id).await}
+async fn runtime_command(
+    w: State<'_, Workbench>,
+    task_id: String,
+) -> Result<host_core::lifecycle::RuntimeCommand> {
+    w.runtime_command(&task_id).await
+}
 
 #[tauri::command]
 async fn choose_runtime_executable(app: tauri::AppHandle) -> Result<Option<String>> {
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog().file().set_title("选择 OMP 可执行文件").blocking_pick_file()
-    }).await.map_err(|e|HostError::new("dialog_failed",e))?;
+        app.dialog()
+            .file()
+            .set_title("选择 OMP 可执行文件")
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| HostError::new("dialog_failed", e))?;
     let Some(path) = picked else { return Ok(None) };
-    let path = path.into_path().map_err(|_|HostError::new("invalid_workspace","无效的 OMP 文件路径"))?;
+    let path = path
+        .into_path()
+        .map_err(|_| HostError::new("invalid_workspace", "无效的 OMP 文件路径"))?;
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
 async fn discover_runtime_from_login_shell() -> Result<Option<String>> {
-    Ok(host_core::discover_login_shell().await?.map(|path|path.to_string_lossy().into_owned()))
+    Ok(host_core::discover_login_shell()
+        .await?
+        .map(|path| path.to_string_lossy().into_owned()))
 }
 
 #[derive(Default)]
-struct SelectedFolders(std::sync::Mutex<std::collections::HashMap<String,std::path::PathBuf>>);
+struct SelectedFolders(std::sync::Mutex<std::collections::HashMap<String, std::path::PathBuf>>);
 
 #[tauri::command]
-async fn choose_project_folders(app: tauri::AppHandle, selections: State<'_, SelectedFolders>) -> Result<Vec<Value>> {
-    let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folders()).await.map_err(|e|HostError::new("dialog_failed",e))?;
-    let mut output=Vec::new();
-    let mut selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
+async fn choose_project_folders(
+    app: tauri::AppHandle,
+    selections: State<'_, SelectedFolders>,
+) -> Result<Vec<Value>> {
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folders())
+            .await
+            .map_err(|e| HostError::new("dialog_failed", e))?;
+    let mut output = Vec::new();
+    let mut selected = selections
+        .0
+        .lock()
+        .map_err(|_| HostError::new("dialog_failed", "目录选择状态不可用"))?;
     for file in picked.unwrap_or_default() {
-        let path=file.into_path().map_err(|e|HostError::new("invalid_workspace",e))?;
-        let token=uuid::Uuid::new_v4().to_string();
+        let path = file
+            .into_path()
+            .map_err(|e| HostError::new("invalid_workspace", e))?;
+        let token = uuid::Uuid::new_v4().to_string();
         output.push(serde_json::json!({"token":token,"path":path}));
-        selected.insert(token,path);
+        selected.insert(token, path);
     }
     Ok(output)
 }
 
 #[tauri::command]
-async fn create_local_project(w:State<'_,Workbench>,selections:State<'_,SelectedFolders>,name:String,tokens:Vec<String>,trusted:bool)->Result<Project>{
-    let paths={let selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
-        tokens.iter().map(|t|selected.get(t).cloned().ok_or_else(||HostError::new("invalid_workspace","请重新选择项目文件夹"))).collect::<Result<Vec<_>>>()?};
-    if !trusted { return Err(HostError::new("workspace_untrusted","请确认目录信任")); }
-    let project=w.store.register_project(&name,paths,trusted).await?;
-    if let Ok(mut selected)=selections.0.lock(){for t in tokens {selected.remove(&t);}}
+async fn create_local_project(
+    w: State<'_, Workbench>,
+    selections: State<'_, SelectedFolders>,
+    name: String,
+    tokens: Vec<String>,
+    trusted: bool,
+) -> Result<Project> {
+    let paths = {
+        let selected = selections
+            .0
+            .lock()
+            .map_err(|_| HostError::new("dialog_failed", "目录选择状态不可用"))?;
+        tokens
+            .iter()
+            .map(|t| {
+                selected
+                    .get(t)
+                    .cloned()
+                    .ok_or_else(|| HostError::new("invalid_workspace", "请重新选择项目文件夹"))
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    if !trusted {
+        return Err(HostError::new("workspace_untrusted", "请确认目录信任"));
+    }
+    let project = w.store.register_project(&name, paths, trusted).await?;
+    if let Ok(mut selected) = selections.0.lock() {
+        for t in tokens {
+            selected.remove(&t);
+        }
+    }
     Ok(project)
 }
 
 #[derive(serde::Deserialize)]
-#[serde(rename_all="camelCase")]
-enum ProjectFolder { Existing(usize), Selected(String) }
+#[serde(rename_all = "camelCase")]
+enum ProjectFolder {
+    Existing(usize),
+    Selected(String),
+}
 
 #[tauri::command]
-async fn edit_local_project(w:State<'_,Workbench>,selections:State<'_,SelectedFolders>,id:String,name:String,folders:Vec<ProjectFolder>,trusted:bool)->Result<Project>{
-    let project=w.store.projects().await?.into_iter().find(|p|p.id==id).ok_or_else(||HostError::new("project_missing","项目不存在"))?;
-    let paths={let selected=selections.0.lock().map_err(|_|HostError::new("dialog_failed","目录选择状态不可用"))?;
-        folders.iter().map(|folder|match folder {
-            ProjectFolder::Existing(index)=>project.roots.get(*index).cloned().ok_or_else(||HostError::new("invalid_workspace","项目目录已改变，请重新打开编辑窗口")),
-            ProjectFolder::Selected(token)=>selected.get(token).cloned().ok_or_else(||HostError::new("invalid_workspace","请重新选择项目文件夹")),
-        }).collect::<Result<Vec<_>>>()?};
-    w.store.edit_project(&id,&name,paths,trusted).await
+async fn edit_local_project(
+    w: State<'_, Workbench>,
+    selections: State<'_, SelectedFolders>,
+    id: String,
+    name: String,
+    folders: Vec<ProjectFolder>,
+    trusted: bool,
+) -> Result<Project> {
+    let project = w
+        .store
+        .projects()
+        .await?
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?;
+    let paths = {
+        let selected = selections
+            .0
+            .lock()
+            .map_err(|_| HostError::new("dialog_failed", "目录选择状态不可用"))?;
+        folders
+            .iter()
+            .map(|folder| match folder {
+                ProjectFolder::Existing(index) => {
+                    project.roots.get(*index).cloned().ok_or_else(|| {
+                        HostError::new("invalid_workspace", "项目目录已改变，请重新打开编辑窗口")
+                    })
+                }
+                ProjectFolder::Selected(token) => selected
+                    .get(token)
+                    .cloned()
+                    .ok_or_else(|| HostError::new("invalid_workspace", "请重新选择项目文件夹")),
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    w.store.edit_project(&id, &name, paths, trusted).await
 }
 
 fn external_url(value: &str) -> Result<url::Url> {
@@ -135,7 +307,7 @@ async fn open_external_link(url: String) -> Result<()> {
 
 #[cfg(test)]
 mod link_tests {
-    use super::external_url;
+    use super::{capability_manifest, external_url};
     #[test]
     fn restrict_external_urls() {
         for value in [
@@ -155,6 +327,16 @@ mod link_tests {
         ] {
             assert!(external_url(value).is_ok(), "{value}");
         }
+    }
+
+    #[test]
+    fn capability_manifest_matches_the_supported_host_surface() {
+        let manifest = capability_manifest();
+        assert_eq!(manifest["minimumOmpVersion"], host_core::MIN_VERSION);
+        assert_eq!(manifest["features"]["trajectory"], "supported");
+        assert_eq!(manifest["runtimeCommands"]["prompt"], "supported");
+        assert_eq!(manifest["runtimeCommands"]["navigateTree"], "unsupported");
+        assert_eq!(manifest["platform"]["browser"], false);
     }
 }
 
@@ -208,6 +390,71 @@ async fn task_records(w: State<'_, Workbench>) -> Result<Vec<TaskRecord>> {
     w.records().await
 }
 #[tauri::command]
+async fn refresh_session_catalog(
+    w: State<'_, Workbench>,
+    rebuild: bool,
+) -> Result<host_core::session_catalog::CatalogRefresh> {
+    w.refresh_session_catalog(rebuild).await
+}
+#[tauri::command]
+async fn list_session_catalog(
+    w: State<'_, Workbench>,
+    query: String,
+    include_archived: bool,
+    offset: u64,
+    limit: u64,
+) -> Result<host_core::session_catalog::CatalogPage> {
+    w.session_catalog(&query, include_archived, offset, limit)
+        .await
+}
+#[tauri::command]
+async fn update_session_view(
+    w: State<'_, Workbench>,
+    session_key: String,
+    last_seen_entry_id: Option<String>,
+    scroll_anchor_entry_id: Option<String>,
+    scroll_anchor_offset: Option<f64>,
+    archived: Option<bool>,
+) -> Result<()> {
+    w.update_session_view(
+        &session_key,
+        last_seen_entry_id,
+        scroll_anchor_entry_id,
+        scroll_anchor_offset,
+        archived,
+    )
+    .await
+}
+#[tauri::command]
+async fn list_agent_profiles(
+    w: State<'_, Workbench>,
+    scope: String,
+    project_id: Option<String>,
+    root_index: Option<usize>,
+) -> Result<Vec<host_core::agent_profiles::AgentProfile>> {
+    w.agent_profiles(&scope, project_id.as_deref(), root_index).await
+}
+#[tauri::command]
+async fn save_agent_profile(
+    w: State<'_, Workbench>,
+    scope: String,
+    project_id: Option<String>,
+    root_index: Option<usize>,
+    name: String,
+    content: String,
+    revision: String,
+) -> Result<host_core::agent_profiles::AgentProfile> {
+    w.save_agent_profile(
+        &scope,
+        project_id.as_deref(),
+        root_index,
+        &name,
+        &content,
+        &revision,
+    )
+    .await
+}
+#[tauri::command]
 async fn create_task(
     w: State<'_, Workbench>,
     project_id: String,
@@ -216,13 +463,14 @@ async fn create_task(
     model: Option<String>,
     auto_title: Option<bool>,
 ) -> Result<TaskRecord> {
-    let task = w.create_task_with_model(
-        &project_id,
-        &title,
-        mode.as_deref().unwrap_or("shared"),
-        model,
-    )
-    .await?;
+    let task = w
+        .create_task_with_model(
+            &project_id,
+            &title,
+            mode.as_deref().unwrap_or("shared"),
+            model,
+        )
+        .await?;
     if auto_title.unwrap_or(false) {
         w.store.mark_title_initial(&task.id).await?;
         return w.store.task(&task.id).await;
@@ -288,7 +536,11 @@ async fn restart_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSn
     w.restart(&task_id).await
 }
 #[tauri::command]
-async fn set_task_approval(w: State<'_, Workbench>, task_id: String, mode: Option<String>) -> Result<host_core::store::TaskRecord> {
+async fn set_task_approval(
+    w: State<'_, Workbench>,
+    task_id: String,
+    mode: Option<String>,
+) -> Result<host_core::store::TaskRecord> {
     w.set_approval_mode(&task_id, mode).await
 }
 #[tauri::command]
@@ -311,26 +563,45 @@ async fn prompt_task(
     attachment_ids: Option<Vec<String>>,
     references: Option<Vec<FileReference>>,
 ) -> Result<TaskSnapshot> {
-    let mut message=message;
-    let references=references.unwrap_or_default();
-    if references.len()>32 {return Err(HostError::new("invalid_request","引用文件过多"));}
+    let mut message = message;
+    let references = references.unwrap_or_default();
+    if references.len() > 32 {
+        return Err(HostError::new("invalid_request", "引用文件过多"));
+    }
     for reference in references {
-        w.preview_file(&task_id,reference.root_index,&reference.path).await?;
-        let roots=w.store.validate_task_roots(&task_id).await?;
-        let path=roots.get(reference.root_index).ok_or_else(||HostError::new("invalid_file_root","目录不属于当前任务"))?.join(&reference.path);
-        message.push_str(&format!("\nReferenced workspace file: {}",serde_json::to_string(&path).map_err(|e|HostError::new("invalid_request",e))?));
+        w.preview_file(&task_id, reference.root_index, &reference.path)
+            .await?;
+        let roots = w.store.validate_task_roots(&task_id).await?;
+        let path = roots
+            .get(reference.root_index)
+            .ok_or_else(|| HostError::new("invalid_file_root", "目录不属于当前任务"))?
+            .join(&reference.path);
+        message.push_str(&format!(
+            "\nReferenced workspace file: {}",
+            serde_json::to_string(&path).map_err(|e| HostError::new("invalid_request", e))?
+        ));
     }
     w.prompt_with_attachments(&task_id, &message, &attachment_ids.unwrap_or_default())
         .await
 }
 #[derive(serde::Deserialize)]
-#[serde(rename_all="camelCase")]
-struct FileReference {root_index:usize,path:String}
+#[serde(rename_all = "camelCase")]
+struct FileReference {
+    root_index: usize,
+    path: String,
+}
 
 #[tauri::command]
-async fn search_task_files(w:State<'_,Workbench>,task_id:String,root_index:usize,query:String)->Result<host_core::files::DirectoryPage>{
-    if let Some(project)=task_id.strip_prefix("project:"){return w.search_project_files(project,root_index,&query).await;}
-    w.search_files(&task_id,root_index,&query).await
+async fn search_task_files(
+    w: State<'_, Workbench>,
+    task_id: String,
+    root_index: usize,
+    query: String,
+) -> Result<host_core::files::DirectoryPage> {
+    if let Some(project) = task_id.strip_prefix("project:") {
+        return w.search_project_files(project, root_index, &query).await;
+    }
+    w.search_files(&task_id, root_index, &query).await
 }
 #[tauri::command]
 async fn list_task_files(
@@ -432,7 +703,233 @@ async fn terminal_close(
 }
 #[tauri::command]
 async fn abort_task(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
-    w.request(&task_id, "abort", serde_json::json!({})).await
+    w.request(
+        &task_id,
+        host_core::RpcRequest::Abort,
+        serde_json::json!({}),
+    )
+    .await
+}
+#[tauri::command]
+async fn runtime_send(
+    w: State<'_, Workbench>,
+    task_id: String,
+    action: String,
+    message: String,
+    streaming_behavior: Option<String>,
+) -> Result<TaskSnapshot> {
+    let command = match action.as_str() {
+        "prompt" => host_core::RpcRequest::Prompt,
+        "steer" => host_core::RpcRequest::Steer,
+        "follow_up" => host_core::RpcRequest::FollowUp,
+        "abort_and_prompt" => host_core::RpcRequest::AbortAndPrompt,
+        _ => {
+            return Err(HostError::new(
+                "forbidden_command",
+                "Unsupported runtime message action",
+            ));
+        }
+    };
+    if streaming_behavior
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "steer" | "followUp"))
+    {
+        return Err(HostError::new(
+            "invalid_request",
+            "Unknown streaming behavior",
+        ));
+    }
+    let mut payload = serde_json::json!({"message":message});
+    if let Some(value) = streaming_behavior {
+        payload["streamingBehavior"] = serde_json::json!(value);
+    }
+    w.request(&task_id, command, payload).await
+}
+#[tauri::command]
+async fn runtime_set_mode(
+    w: State<'_, Workbench>,
+    task_id: String,
+    mode_type: String,
+    mode: String,
+) -> Result<TaskSnapshot> {
+    let (command, valid) = match mode_type.as_str() {
+        "steering" => (
+            host_core::RpcQuery::SetSteeringMode,
+            matches!(mode.as_str(), "all" | "one-at-a-time"),
+        ),
+        "follow_up" => (
+            host_core::RpcQuery::SetFollowUpMode,
+            matches!(mode.as_str(), "all" | "one-at-a-time"),
+        ),
+        "interrupt" => (
+            host_core::RpcQuery::SetInterruptMode,
+            matches!(mode.as_str(), "immediate" | "wait"),
+        ),
+        _ => {
+            return Err(HostError::new(
+                "forbidden_command",
+                "Unsupported queue mode",
+            ));
+        }
+    };
+    if !valid {
+        return Err(HostError::new(
+            "invalid_request",
+            "Unknown queue mode value",
+        ));
+    }
+    w.runtime_query(&task_id, command, serde_json::json!({"mode":mode}))
+        .await
+}
+#[tauri::command]
+async fn runtime_set_toggle(
+    w: State<'_, Workbench>,
+    task_id: String,
+    setting: String,
+    enabled: bool,
+) -> Result<TaskSnapshot> {
+    let command = match setting.as_str() {
+        "auto_compaction" => host_core::RpcQuery::SetAutoCompaction,
+        "auto_retry" => host_core::RpcQuery::SetAutoRetry,
+        _ => {
+            return Err(HostError::new(
+                "forbidden_command",
+                "Unsupported runtime setting",
+            ));
+        }
+    };
+    w.runtime_query(&task_id, command, serde_json::json!({"enabled":enabled}))
+        .await
+}
+#[tauri::command]
+async fn runtime_compact(
+    w: State<'_, Workbench>,
+    task_id: String,
+    custom_instructions: Option<String>,
+) -> Result<TaskSnapshot> {
+    let mut payload = serde_json::json!({});
+    if let Some(value) = custom_instructions.filter(|value| !value.trim().is_empty()) {
+        payload["customInstructions"] = serde_json::json!(value);
+    }
+    w.runtime_query(&task_id, host_core::RpcQuery::Compact, payload)
+        .await
+}
+#[tauri::command]
+async fn runtime_abort_retry(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
+    w.runtime_query(
+        &task_id,
+        host_core::RpcQuery::AbortRetry,
+        serde_json::json!({}),
+    )
+    .await
+}
+#[tauri::command]
+async fn runtime_commands(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
+    w.runtime_query(
+        &task_id,
+        host_core::RpcQuery::GetAvailableCommands,
+        serde_json::json!({}),
+    )
+    .await
+}
+#[tauri::command]
+async fn runtime_subagents(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
+    w.runtime_query(
+        &task_id,
+        host_core::RpcQuery::GetSubagents,
+        serde_json::json!({}),
+    )
+    .await
+}
+#[tauri::command]
+async fn runtime_subagent_messages(
+    w: State<'_, Workbench>,
+    task_id: String,
+    subagent_id: Option<String>,
+    session_file: Option<String>,
+    from_byte: Option<u64>,
+) -> Result<Value> {
+    w.runtime_subagent_messages(&task_id, subagent_id, session_file, from_byte)
+        .await
+}
+#[tauri::command]
+async fn runtime_set_thinking(
+    w: State<'_, Workbench>,
+    task_id: String,
+    level: String,
+) -> Result<TaskSnapshot> {
+    w.set_runtime_thinking(&task_id, level).await
+}
+
+#[tauri::command]
+async fn provider_login_options(w: State<'_, Workbench>, task_id: String) -> Result<Value> {
+    w.login_providers(&task_id).await
+}
+
+#[tauri::command]
+async fn provider_login(
+    w: State<'_, Workbench>,
+    task_id: String,
+    provider_id: String,
+) -> Result<Value> {
+    w.login_provider(&task_id, &provider_id).await
+}
+
+#[tauri::command]
+async fn provider_usage(w: State<'_, Workbench>) -> Result<Value> {
+    w.provider_usage().await
+}
+
+#[tauri::command]
+async fn provider_logout(
+    w: State<'_, Workbench>,
+    provider_id: String,
+    confirmed: bool,
+) -> Result<()> {
+    w.logout_provider(&provider_id, confirmed).await
+}
+
+#[tauri::command]
+async fn plugin_overview(
+    w: State<'_, Workbench>,
+    project_id: Option<String>,
+) -> Result<host_core::ecosystem::PluginOverview> {
+    w.plugin_overview(project_id.as_deref()).await
+}
+
+#[tauri::command]
+async fn set_plugin_enabled(
+    w: State<'_, Workbench>,
+    project_id: Option<String>,
+    plugin_id: String,
+    enabled: bool,
+    scope: String,
+) -> Result<Value> {
+    w.set_plugin_enabled(
+        project_id.as_deref(),
+        &plugin_id,
+        enabled,
+        &scope,
+    )
+    .await
+}
+#[tauri::command]
+async fn mutate_plugin(
+    w: State<'_, Workbench>,
+    project_id: Option<String>,
+    action: String,
+    plugin_id: String,
+    scope: String,
+    confirmed: bool,
+) -> Result<host_core::ecosystem::PluginOverview> {
+    w.mutate_plugin(
+        project_id.as_deref(),
+        &action,
+        &plugin_id,
+        &scope,
+        confirmed,
+    )
+    .await
 }
 #[tauri::command]
 async fn respond_ui(
@@ -443,7 +940,7 @@ async fn respond_ui(
     confirmed: Option<bool>,
     cancelled: bool,
 ) -> Result<TaskSnapshot> {
-    w.request(&task_id,"extension_ui_response",serde_json::json!({"id":request_id,"value":value,"confirmed":confirmed,"cancelled":cancelled})).await
+    w.request(&task_id,host_core::RpcRequest::ExtensionUiResponse,serde_json::json!({"id":request_id,"value":value,"confirmed":confirmed,"cancelled":cancelled})).await
 }
 #[tauri::command]
 async fn recover_session(
@@ -454,28 +951,65 @@ async fn recover_session(
     w.recover_session(&task_id, confirmed).await
 }
 #[tauri::command]
-async fn download_task_session(app: tauri::AppHandle, w: State<'_, Workbench>, task_id: String) -> Result<Option<String>> {
+async fn download_task_session(
+    app: tauri::AppHandle,
+    w: State<'_, Workbench>,
+    task_id: String,
+) -> Result<Option<String>> {
     let bytes = w.export_session(&task_id).await?;
     let task = w.store.task(&task_id).await?;
-    let safe_id: String = task.session_id.unwrap_or(task_id).chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect();
-    let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file()
-        .set_title("下载会话 Session").set_file_name(format!("omp-session-{safe_id}.zip"))
-        .add_filter("Session ZIP", &["zip"]).blocking_save_file())
-        .await.map_err(|e| HostError::new("dialog_failed", e))?;
-    let Some(picked) = picked else { return Ok(None); };
-    let path = picked.into_path().map_err(|e| HostError::new("session_export_failed", e))?;
+    let safe_id: String = task
+        .session_id
+        .unwrap_or(task_id)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(80)
+        .collect();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("下载会话 Session")
+            .set_file_name(format!("omp-session-{safe_id}.zip"))
+            .add_filter("Session ZIP", &["zip"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| HostError::new("dialog_failed", e))?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| HostError::new("session_export_failed", e))?;
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Write;
         // Never truncate an existing session, resource, or other user file.
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)
-            .map_err(|e| HostError::new("session_export_failed", if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "文件已存在，请换一个文件名保存。".to_owned()
-            } else { format!("无法创建导出文件：{e}") }))?;
-        file.write_all(&bytes).and_then(|_| file.sync_all())
-            .map_err(|e| HostError::new("session_export_failed", format!("保存失败，目标位置可能有不完整的 ZIP，请换名重试：{e}")))?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                HostError::new(
+                    "session_export_failed",
+                    if e.kind() == std::io::ErrorKind::AlreadyExists {
+                        "文件已存在，请换一个文件名保存。".to_owned()
+                    } else {
+                        format!("无法创建导出文件：{e}")
+                    },
+                )
+            })?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| {
+                HostError::new(
+                    "session_export_failed",
+                    format!("保存失败，目标位置可能有不完整的 ZIP，请换名重试：{e}"),
+                )
+            })?;
         Ok(Some(path.to_string_lossy().into_owned()))
-    }).await.map_err(|e| HostError::new("session_export_failed", e))?
+    })
+    .await
+    .map_err(|e| HostError::new("session_export_failed", e))?
 }
 #[tauri::command]
 async fn fork_task(w: State<'_, Workbench>, task_id: String, timestamp: f64) -> Result<TaskRecord> {
@@ -490,25 +1024,61 @@ async fn task_history(
     w.history(&task_id, cursor).await
 }
 #[tauri::command]
-async fn task_trajectory(w: State<'_, Workbench>, task_id: String, cursor:Option<String>, after:Option<bool>) -> Result<host_core::trajectory_history::Page> {
-    let task=w.store.task(&task_id).await?;
-    let active=w.runtime.snapshot(&task_id).await.ok();
+async fn task_trajectory(
+    w: State<'_, Workbench>,
+    task_id: String,
+    cursor: Option<String>,
+    after: Option<bool>,
+) -> Result<host_core::trajectory_history::Page> {
+    let task = w.store.task(&task_id).await?;
+    let active = w.runtime.snapshot(&task_id).await.ok();
     tokio::task::spawn_blocking(move || {
-        let history=match (task.session_file,task.session_id){
-            (Some(file),Some(session)) if file.exists()=>host_core::trajectory_history::read(&file,&session)?,
-            (None,None)=>host_core::trajectory_history::History{records:vec![],revision:"empty".into(),warnings:vec![]},
-            (Some(_),Some(_)) if active.as_ref().is_some_and(|s|matches!(s.status.as_str(),"ready"|"running"|"starting"))=>host_core::trajectory_history::History{records:vec![],revision:"pending".into(),warnings:vec![]},
-            _=>return Err(HostError::new("session_missing","任务会话文件不存在")),
+        let history = match (task.session_file, task.session_id) {
+            (Some(file), Some(session)) if file.exists() => {
+                host_core::trajectory_history::read(&file, &session)?
+            }
+            (None, None) => host_core::trajectory_history::History {
+                records: vec![],
+                revision: "empty".into(),
+                warnings: vec![],
+            },
+            (Some(_), Some(_))
+                if active.as_ref().is_some_and(|s| {
+                    matches!(s.status.as_str(), "ready" | "running" | "starting")
+                }) =>
+            {
+                host_core::trajectory_history::History {
+                    records: vec![],
+                    revision: "pending".into(),
+                    warnings: vec![],
+                }
+            }
+            _ => return Err(HostError::new("session_missing", "任务会话文件不存在")),
         };
-        host_core::trajectory_history::page(history,cursor.as_deref(),after.unwrap_or(false))
-    }).await.map_err(|e|HostError::new("trajectory_read",e))?
+        host_core::trajectory_history::page(history, cursor.as_deref(), after.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| HostError::new("trajectory_read", e))?
 }
 #[tauri::command]
-async fn task_trajectory_image(w:State<'_,Workbench>,task_id:String,record_id:String,image_id:String)->Result<Value>{
-    let task=w.store.task(&task_id).await?;
-    let file=task.session_file.ok_or_else(||HostError::new("session_missing","会话不存在"))?;
-    let session=task.session_id.ok_or_else(||HostError::new("session_missing","会话身份不存在"))?;
-    tokio::task::spawn_blocking(move ||host_core::trajectory_history::image(&file,&session,&record_id,&image_id)).await.map_err(|e|HostError::new("trajectory_image",e))?
+async fn task_trajectory_image(
+    w: State<'_, Workbench>,
+    task_id: String,
+    record_id: String,
+    image_id: String,
+) -> Result<Value> {
+    let task = w.store.task(&task_id).await?;
+    let file = task
+        .session_file
+        .ok_or_else(|| HostError::new("session_missing", "会话不存在"))?;
+    let session = task
+        .session_id
+        .ok_or_else(|| HostError::new("session_missing", "会话身份不存在"))?;
+    tokio::task::spawn_blocking(move || {
+        host_core::trajectory_history::image(&file, &session, &record_id, &image_id)
+    })
+    .await
+    .map_err(|e| HostError::new("trajectory_image", e))?
 }
 #[tauri::command]
 async fn task_usage(w: State<'_, Workbench>, task_id: String) -> Result<TaskSnapshot> {
@@ -564,7 +1134,11 @@ async fn task_thinking(w: State<'_, Workbench>, task_id: String) -> Result<Optio
     w.store.task_thinking(&task_id).await
 }
 #[tauri::command]
-async fn set_task_thinking(w: State<'_, Workbench>, task_id: String, level: Option<String>) -> Result<()> {
+async fn set_task_thinking(
+    w: State<'_, Workbench>,
+    task_id: String,
+    level: Option<String>,
+) -> Result<()> {
     w.select_thinking(&task_id, level).await
 }
 #[tauri::command]
@@ -616,15 +1190,34 @@ async fn model_catalog(
     host_core::model_config::catalog(&cache, &version).await
 }
 #[tauri::command]
-async fn select_project_model(w: State<'_, Workbench>, project_id: String, provider: String, model_id: String) -> Result<()> {
-    let project = w.store.projects().await?.into_iter().find(|p| p.id == project_id)
+async fn select_project_model(
+    w: State<'_, Workbench>,
+    project_id: String,
+    provider: String,
+    model_id: String,
+) -> Result<()> {
+    let project = w
+        .store
+        .projects()
+        .await?
+        .into_iter()
+        .find(|p| p.id == project_id)
         .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?;
     let executable = model_executable(&w).await?;
     let available = host_core::model_config::discover(&executable, &project.roots[0]).await?;
-    if !available.models.iter().any(|m| m["provider"] == provider && m["id"] == model_id) {
+    if !available
+        .models
+        .iter()
+        .any(|m| m["provider"] == provider && m["id"] == model_id)
+    {
         return Err(HostError::new("model_unavailable", "所选模型已不可用"));
     }
-    w.store.set_setting(&format!("project_model:{project_id}"), format!("{provider}/{model_id}")).await
+    w.store
+        .set_setting(
+            &format!("project_model:{project_id}"),
+            format!("{provider}/{model_id}"),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -642,9 +1235,17 @@ async fn model_config_verify(
         .map_err(|_| HostError::new("config_verify", "无法定位验证目录"))?
         .join("model-probe");
     let cwd = if let Some(id) = &project_id {
-        w.store.projects().await?.into_iter().find(|p| &p.id == id)
-            .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?.roots[0].clone()
-    } else { cwd };
+        w.store
+            .projects()
+            .await?
+            .into_iter()
+            .find(|p| &p.id == id)
+            .ok_or_else(|| HostError::new("project_missing", "项目不存在"))?
+            .roots[0]
+            .clone()
+    } else {
+        cwd
+    };
     host_core::model_config::load(&host_core::model_config::config_path()?)?;
     if let (Some(p), Some(id)) = (provider, model_id) {
         host_core::model_config::connect(&path, &cwd, &p, &id).await
@@ -694,19 +1295,49 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             let workbench = tauri::async_runtime::block_on(Workbench::open(directory))?;
             tauri::async_runtime::block_on(workbench.start_handoff_server())?;
-            let maintenance=workbench.clone();
+            let maintenance = workbench.clone();
             tauri::async_runtime::spawn(async move {
-                let mut interval=tokio::time::interval(std::time::Duration::from_secs(30));
-                loop {interval.tick().await;if let Err(error)=maintenance.runtime_release_idle(false).await {eprintln!("OMP idle maintenance failed: {}",error.code);}}
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    if let Err(error) = maintenance.runtime_release_idle(false).await {
+                        eprintln!("OMP idle maintenance failed: {}", error.code);
+                    }
+                }
             });
             app.manage(workbench);
             app.manage(SelectedFolders::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            open_in_app_apps, open_in_app_icon, open_in_app,
-            runtime_tasks,runtime_focus,runtime_keep_alive,runtime_action,runtime_release_idle,runtime_command,
-            choose_runtime_executable, discover_runtime_from_login_shell,
+            host_capabilities,
+            open_in_app_apps,
+            open_in_app_icon,
+            open_in_app,
+            runtime_tasks,
+            runtime_focus,
+            runtime_keep_alive,
+            runtime_action,
+            runtime_release_idle,
+            runtime_command,
+            runtime_send,
+            runtime_set_mode,
+            runtime_set_toggle,
+            runtime_compact,
+            runtime_abort_retry,
+            runtime_commands,
+            runtime_subagents,
+            runtime_subagent_messages,
+            runtime_set_thinking,
+            provider_login_options,
+            provider_login,
+            provider_usage,
+            provider_logout,
+            plugin_overview,
+            set_plugin_enabled,
+            mutate_plugin,
+            choose_runtime_executable,
+            discover_runtime_from_login_shell,
             model_config_apply,
             model_config_load,
             model_config_save,
@@ -724,6 +1355,11 @@ pub fn run() {
             edit_local_project,
             update_project,
             task_records,
+            refresh_session_catalog,
+            list_session_catalog,
+            update_session_view,
+            list_agent_profiles,
+            save_agent_profile,
             create_task,
             update_task,
             suggest_task_title,

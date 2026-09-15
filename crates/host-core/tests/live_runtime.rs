@@ -71,8 +71,8 @@ async fn real_host_lifecycle() {
         let b=wait(&worker,"beta",|s|s.status=="ready").await;
         assert_ne!(pid(&a),pid(&b)); assert_ne!(a.run_id,b.run_id);
         let (ra,rb)=tokio::join!(
-            worker.request("alpha","prompt",json!({"message":"Do not use tools. Reply with exactly ALPHA_OK."})),
-            worker.request("beta","prompt",json!({"message":"Do not use tools. Reply with exactly BETA_OK."}))
+            worker.request("alpha",host_core::RpcRequest::Prompt,json!({"message":"Do not use tools. Reply with exactly ALPHA_OK."})),
+            worker.request("beta",host_core::RpcRequest::Prompt,json!({"message":"Do not use tools. Reply with exactly BETA_OK."}))
         );ra.unwrap();rb.unwrap();
         let a=wait(&worker,"alpha",|s|s.status=="idle").await;
         let b=wait(&worker,"beta",|s|s.status=="idle").await;
@@ -80,9 +80,9 @@ async fn real_host_lifecycle() {
         assert!(b.text.contains("BETA_OK"));assert!(!b.text.contains("ALPHA_OK"));isolated(&a);isolated(&b);
         println!("PASS observer/concurrent prompts: authenticated snapshot, event envelope, separate PIDs and session text");
         let before=a.seq;
-        worker.request("alpha","prompt",json!({"message":"Do not use tools. Write 1000 words explaining software testing."})).await.unwrap();
+        worker.request("alpha",host_core::RpcRequest::Prompt,json!({"message":"Do not use tools. Write 1000 words explaining software testing."})).await.unwrap();
         wait(&worker,"alpha",|s|s.status=="running"&&s.events.iter().any(|e|e.seq>before&&e.event_type=="message_update")).await;
-        worker.request("alpha","abort",json!({})).await.unwrap();
+        worker.request("alpha",host_core::RpcRequest::Abort,json!({})).await.unwrap();
         let stopped=wait(&worker,"alpha",|s|s.status=="interrupted").await;
         assert!(stopped.events.iter().any(|e|e.seq>before&&e.event_type=="agent_end"));
         assert_eq!(worker.snapshot("beta").await.unwrap().status,"idle");
@@ -92,11 +92,11 @@ async fn real_host_lifecycle() {
         assert_ne!(fresh.run_id,stopped.run_id); assert_eq!(fresh.seq,0);assert!(fresh.events.is_empty());
         assert_eq!(unsafe{libc::kill(old_pid,0)},-1,"old process survived restart");
         let restarted=wait(&worker,"alpha",|s|s.status=="ready").await;isolated(&restarted);
-        worker.request("alpha","prompt",json!({"message":"Do not use tools. Reply exactly RESTART_OK."})).await.unwrap();
+        worker.request("alpha",host_core::RpcRequest::Prompt,json!({"message":"Do not use tools. Reply exactly RESTART_OK."})).await.unwrap();
         let restarted=wait(&worker,"alpha",|s|s.status=="idle").await;
         assert!(restarted.text.contains("RESTART_OK"));assert!(!restarted.text.contains("ALPHA_OK"));
         println!("PASS restart: new runId/reset seq, old process reaped, subsequent prompt works");
-        worker.request("beta","prompt",json!({"message":"Do not use tools. Reply exactly SURVIVOR_OK."})).await.unwrap();
+        worker.request("beta",host_core::RpcRequest::Prompt,json!({"message":"Do not use tools. Reply exactly SURVIVOR_OK."})).await.unwrap();
         assert_eq!(unsafe{libc::kill(pid(&restarted),libc::SIGKILL)},0);
         timeout(Duration::from_secs(10),async{loop{if worker.snapshot("alpha").await.unwrap().status=="failed"{break;}sleep(Duration::from_millis(50)).await;}}).await.unwrap();
         let crash=timeout(Duration::from_secs(10),async {loop {let text=observer_client.next().await.unwrap().unwrap().into_text().unwrap();if text.contains("process_exited")&&text.contains("alpha"){return text;}}}).await.unwrap();
@@ -107,7 +107,7 @@ async fn real_host_lifecycle() {
         worker.stop("beta").await.unwrap();
         assert_eq!(unsafe{libc::kill(pid(&b),0)},-1,"stopped process survived");
         assert_eq!(worker.snapshot("beta").await.unwrap().status,"stopped");
-        assert!(worker.request("beta","prompt",json!({"message":"must not run"})).await.is_err());
+        assert!(worker.request("beta",host_core::RpcRequest::Prompt,json!({"message":"must not run"})).await.is_err());
         worker.restart("beta").await.unwrap();
         let alive=wait(&worker,"beta",|s|s.status=="ready").await;
         worker.shutdown().await.unwrap();

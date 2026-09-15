@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {host,hostError,modelConfig,projects,records} from '../../host';
+import {host,hostError,modelConfig,projects,records,taskRuntime} from '../../host';
 import {HistoryFeed} from '../../history';
 import {applyEvent,mergeSnapshot} from '../../live-events';
 import {sendPrompt,type FileReference} from '../../host';
@@ -8,6 +8,10 @@ import type {HostError,Project,TaskRecord,TaskSnapshot} from '../../../../../pac
 
 const messageText=(m:Message)=>typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.map(b=>b?.text??'').join(''):'';
 const matchesSent=(m:Message,text:string)=>m.role==='user'&&(messageText(m)===text||messageText(m).startsWith(text+'\nReferenced workspace file:'));
+const DRAFTS_KEY='cool-pi-desktop.composer-drafts';
+function readDrafts():Record<string,string>{
+ try{const value=JSON.parse(localStorage.getItem(DRAFTS_KEY)??'{}');if(!value||typeof value!=='object')return{};const drafts:Record<string,string>={};for(const [key,text] of Object.entries(value)){if(key.length<=512&&typeof text==='string'&&text.length<=65536)drafts[key]=text;}return drafts;}catch{return{};}
+}
 
 export function useWorkbench(){
  const [ps,setProjects]=useState<Project[]>([]),[tasks,setTasks]=useState<TaskRecord[]>([]),[runs,setRuns]=useState<TaskSnapshot[]>([]);
@@ -15,7 +19,7 @@ export function useWorkbench(){
  const [projectId,setProjectId]=useState(''),[taskId,setTaskId]=useState('');
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState<HostError|null>(null);
  const [historyError,setHistoryError]=useState<HostError|null>(null),[historyBusy,setHistoryBusy]=useState(false),[,render]=useState(0);
- const [drafts,setDrafts]=useState<Record<string,string>>({});
+ const [drafts,setDrafts]=useState<Record<string,string>>(readDrafts);
  const [attachments,setAttachments]=useState<Record<string,string[]>>({});
  const [references,setReferences]=useState<Record<string,FileReference[]>>({});
  const [outbox,setOutbox]=useState<Record<string,{message:Message;text:string;ids:string[];refs:FileReference[];failed:boolean;baseline:number}>>({});
@@ -52,6 +56,7 @@ export function useWorkbench(){
   setProjectModels(old=>({...old,[selectedProject]:provider+'/'+id}));
  };
  useEffect(()=>{void refreshModels();},[refreshModels]);
+ useEffect(()=>{try{const kept=Object.fromEntries(Object.entries(drafts).filter(([,value])=>value));localStorage.setItem(DRAFTS_KEY,JSON.stringify(kept));}catch{}},[drafts]);
  useEffect(()=>{active.current=true;let inFlight=false;const poll=async()=>{if(inFlight||operation.current)return;inFlight=true;try{await refresh();}catch(e){if(active.current){setError(hostError(e));setLoading(false);}}finally{inFlight=false;}};void poll();const timer=setInterval(poll,5000);return()=>{active.current=false;feed.current.invalidate();clearInterval(timer);};},[refresh]);
  useEffect(()=>{
   let disposed=false,socket:WebSocket|undefined,retry:ReturnType<typeof setTimeout>,frame=0;
@@ -98,10 +103,11 @@ export function useWorkbench(){
   const ok=await act(async()=>{const state=runs.find(r=>r.taskId===id);if(!state||!['ready','idle','interrupted'].includes(state.status)){const resumed=await records.resume(id);setRuns(old=>mergeSnapshot(old,resumed));}const result=await sendPrompt(id,text,ids,pending.refs);setRuns(old=>mergeSnapshot(old,result));});
   if(!ok)setOutbox(old=>({...old,[id]:{...pending,failed:true}}));
  };
+ const queueMessage=async(id:string,action:'steer'|'follow_up'|'abort_and_prompt')=>{const text=drafts[id]??'';if(operation.current||!text.trim())return;const result=await act(async()=>{const snapshot=await taskRuntime.send(id,action,text);setRuns(old=>mergeSnapshot(old,snapshot));});if(result)setDrafts(old=>({...old,[id]:''}));};
  const pending=outbox[taskId];
  const acknowledged=!!pending&&!pending.failed&&feed.current.messages.filter(m=>matchesSent(m,pending.text)).length>pending.baseline;
  useEffect(()=>{if(acknowledged)setOutbox(old=>{const next={...old};delete next[taskId];return next;});},[acknowledged,taskId]);
  const addAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:[...new Set([...(old[id]??[]),resource])].slice(0,8)}));
  const removeAttachment=(id:string,resource:string)=>setAttachments(old=>({...old,[id]:(old[id]??[]).filter(value=>value!==resource)}));
- return{projects:ps,tasks,runs,models,modelsLoading:modelsLoading||modelsProject!==projectId,modelsError,refreshModels,projectModels,setProjectModels,selectProjectModel,project,task,run,projectId,taskId,chooseTask,chooseProject,fork,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,references,setReferences};
+ return{projects:ps,tasks,runs,models,modelsLoading:modelsLoading||modelsProject!==projectId,modelsError,refreshModels,projectModels,setProjectModels,selectProjectModel,project,task,run,projectId,taskId,chooseTask,chooseProject,fork,loading,busy,error,setError,act,refresh,refreshUsage,history,historyBusy,historyError,messages:pending&&!acknowledged?[...feed.current.messages,pending.message]:feed.current.messages,sendFailed:pending?.failed,cursor:feed.current.cursor,drafts,setDraft,attachments,addAttachment,removeAttachment,send,queueMessage,references,setReferences};
 }

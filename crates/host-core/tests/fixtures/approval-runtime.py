@@ -6,7 +6,7 @@ import sys
 import uuid
 
 if '--version' in sys.argv:
-    print('omp/18.1.15')
+    print('omp/18.1.20')
     sys.exit(0)
 
 def arg(name, default=None):

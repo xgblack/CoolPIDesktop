@@ -20,7 +20,7 @@ it('external owner prevents desktop process actions but preserves details',()=>{
  render(<RuntimePanel task={task} info={{...info,status:'external',owner:'terminal'}}/>);
  expect((screen.getByRole('button',{name:'启动 OMP'}) as HTMLButtonElement).disabled).toBe(true);
  expect(screen.getByText('1234')).toBeTruthy();
- expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+ expect((screen.getByRole('checkbox',{name:/保持运行/}) as HTMLInputElement).disabled).toBe(true);
 });
 it('copying a command never stops a runtime and exposes preview when clipboard fails',async()=>{
  vi.mocked(taskRuntime.command).mockResolvedValue({command:"'/omp' --add-dir '/two words' --approval-mode 'write'",executable:'/omp',arguments:[]});
@@ -33,7 +33,7 @@ it('copying a command never stops a runtime and exposes preview when clipboard f
 });
 it('keep alive changes only the selected task',async()=>{
  render(<RuntimePanel task={task} info={{...info,status:'ready'}}/>);
- fireEvent.click(screen.getByRole('checkbox'));
+ fireEvent.click(screen.getByRole('checkbox',{name:/保持运行/}));
  await waitFor(()=>expect(taskRuntime.keepAlive).toHaveBeenCalledWith('a',true));
 });
 

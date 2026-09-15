@@ -1,4 +1,4 @@
-use crate::{HostError, Workbench, files, session::session_header};
+use crate::{HostError, RpcQuery, Workbench, files, session::session_header};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -146,7 +146,10 @@ impl Workbench {
                         "请等待生成或审批结束后下载会话",
                     ));
                 }
-                let state = self.runtime.query(id, "get_state", json!({})).await?;
+                let state = self
+                    .runtime
+                    .query(id, RpcQuery::GetState, json!({}))
+                    .await?;
                 if state["isStreaming"] != false
                     || state["isCompacting"] != false
                     || state["queuedMessageCount"] != 0

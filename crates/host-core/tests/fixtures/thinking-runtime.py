@@ -14,7 +14,7 @@ def emit(value):
 def arg(name, default=None):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
 if '--version' in sys.argv:
-    print('omp/18.1.19')
+    print('omp/18.1.20')
     sys.exit(0)
 if sys.argv[1] == 'models':
     emit(dict(models=models))

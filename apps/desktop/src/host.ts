@@ -1,7 +1,11 @@
-import {invoke} from '@tauri-apps/api/core';import type {HostError,TaskSnapshot,RuntimeInfo,ObserverInfo,TitlePromptSettings} from '../../../packages/host-contract/src';
+import {invoke} from '@tauri-apps/api/core';import type {HostError,TaskSnapshot,RuntimeInfo,ObserverInfo,TitlePromptSettings,HostCapabilities} from '../../../packages/host-contract/src';
 import type {Project,TaskRecord,HistoryPage,GitStatus,GitDiff,TaskRoot} from '../../../packages/host-contract/src';
+import type {SessionCatalogPage,SessionCatalogRefresh} from '../../../packages/host-contract/src';
+import type {AgentProfile} from '../../../packages/host-contract/src';
+import type {LoginProvider,PluginOverview,ProviderUsage} from '../../../packages/host-contract/src';
 import type {CommitPreview} from '../../../packages/host-contract/src';
-export interface FileReference {rootIndex:number;path:string;name:string}
+export type {FileReference} from '../../../packages/host-contract/src';
+import type {FileReference} from '../../../packages/host-contract/src';
 export const localProjects={edit:(id:string,name:string,folders:({existing:number}|{selected:string})[],trusted:boolean)=>invoke<Project>('edit_local_project',{id,name,folders,trusted}),choose:()=>invoke<{token:string;path:string}[]>('choose_project_folders'),create:(name:string,tokens:string[],trusted:boolean)=>invoke<Project>('create_local_project',{name,tokens,trusted})};
 export const sendPrompt=(taskId:string,message:string,attachmentIds:string[],references:FileReference[])=>invoke<TaskSnapshot>('prompt_task',{taskId,message,attachmentIds,references});
 export const searchFiles=(taskId:string,rootIndex:number,query:string)=>invoke<DirectoryPage>('search_task_files',{taskId,rootIndex,query});
@@ -9,6 +13,26 @@ export const gitWrites={change:(taskId:string,rootIndex:number,path:string,actio
 export const projects={model:(projectId:string,provider:string,modelId:string)=>invoke<void>("select_project_model",{projectId,provider,modelId}),list:()=>invoke<Project[]>('list_projects'),register:(name:string,trusted:boolean)=>invoke<Project|null>('register_project',{name,trusted}),update:(id:string,name:string,archived:boolean)=>invoke<void>('update_project',{id,name,archived})};
 export const records={fork:(taskId:string,timestamp:number)=>invoke<TaskRecord>('fork_task',{taskId,timestamp}),approval:(taskId:string,mode:import('../../../packages/host-contract/src').ApprovalMode|null)=>invoke<TaskRecord>('set_task_approval',{taskId,mode}),list:()=>invoke<TaskRecord[]>('task_records'),create:(projectId:string,title:string,mode:'shared'|'isolated'='shared',model?:string,autoTitle=false)=>invoke<TaskRecord>('create_task',{projectId,title,mode,model,autoTitle}),update:(task:TaskRecord)=>invoke<TaskRecord>('update_task',{id:task.id,title:task.title,pinned:task.pinned,archived:task.archived}),suggestTitle:(taskId:string)=>invoke<string>('suggest_task_title',{taskId}),relocate:(taskId:string,trusted:boolean)=>invoke<TaskRecord|null>('relocate_task',{taskId,trusted}),resume:(taskId:string)=>invoke<TaskSnapshot>('continue_task',{taskId}),history:(taskId:string,cursor:string|null)=>invoke<HistoryPage>('task_history',{taskId,cursor}),usage:(taskId:string)=>invoke<TaskSnapshot>('task_usage',{taskId}),gitStatus:(taskId:string,rootIndex:number)=>invoke<GitStatus>('task_git_status',{taskId,rootIndex}),gitDiff:(taskId:string,rootIndex:number,path:string,staged:boolean,untracked:boolean)=>invoke<GitDiff>('task_git_diff',{taskId,rootIndex,path,staged,untracked}),model:(taskId:string,provider:string,modelId:string)=>invoke<Record<string,unknown>>('select_task_model',{taskId,provider,modelId}),thinking:(taskId:string)=>invoke<string|null>('task_thinking',{taskId}),setThinking:(taskId:string,level:string|null)=>invoke<void>('set_task_thinking',{taskId,level})};
 export const titlePrompt={load:()=>invoke<TitlePromptSettings>('title_prompt_load'),save:(prompt:string|null)=>invoke<TitlePromptSettings>('title_prompt_save',{prompt})};
+export const sessionCatalog={
+ refresh:(rebuild=false)=>invoke<SessionCatalogRefresh>('refresh_session_catalog',{rebuild}),
+ list:(query:string,includeArchived:boolean,offset=0,limit=50)=>invoke<SessionCatalogPage>('list_session_catalog',{query,includeArchived,offset,limit}),
+ updateView:(sessionKey:string,archived:boolean|null=null,lastSeenEntryId:string|null=null,scrollAnchorEntryId:string|null=null,scrollAnchorOffset:number|null=null)=>invoke<void>('update_session_view',{sessionKey,archived,lastSeenEntryId,scrollAnchorEntryId,scrollAnchorOffset}),
+};
+export const agentProfiles={
+ list:(scope:'user'|'project',projectId:string|null=null,rootIndex:number|null=null)=>invoke<AgentProfile[]>('list_agent_profiles',{scope,projectId,rootIndex}),
+ save:(scope:'user'|'project',projectId:string|null,rootIndex:number|null,name:string,content:string,revision:string)=>invoke<AgentProfile>('save_agent_profile',{scope,projectId,rootIndex,name,content,revision}),
+};
+export const providers={
+ loginOptions:(taskId:string)=>invoke<{providers:LoginProvider[]}>('provider_login_options',{taskId}),
+ login:(taskId:string,providerId:string)=>invoke<{providerId:string}>('provider_login',{taskId,providerId}),
+ logout:(providerId:string,confirmed:boolean)=>invoke<void>('provider_logout',{providerId,confirmed}),
+ usage:()=>invoke<ProviderUsage>('provider_usage'),
+};
+export const plugins={
+ overview:(projectId:string|null=null)=>invoke<PluginOverview>('plugin_overview',{projectId}),
+ setEnabled:(projectId:string|null,pluginId:string,enabled:boolean,scope:'user'|'project')=>invoke<unknown>('set_plugin_enabled',{projectId,pluginId,enabled,scope}),
+ mutate:(projectId:string|null,action:'install'|'uninstall'|'upgrade',pluginId:string,scope:'user'|'project',confirmed:boolean)=>invoke<PluginOverview>('mutate_plugin',{projectId,action,pluginId,scope,confirmed}),
+};
 export const host={runtime:(explicit:string)=>invoke<RuntimeInfo>('runtime_status',{explicit:explicit.trim()||null}),chooseRuntime:()=>invoke<string|null>('choose_runtime_executable'),discoverRuntime:()=>invoke<string|null>('discover_runtime_from_login_shell'),list:()=>invoke<TaskSnapshot[]>('list_tasks'),snapshot:(taskId:string)=>invoke<TaskSnapshot>('task_snapshot',{taskId}),prompt:(taskId:string,message:string,attachmentIds:string[]=[])=>invoke<TaskSnapshot>('prompt_task',{taskId,message,attachmentIds}),abort:(taskId:string)=>invoke<TaskSnapshot>('abort_task',{taskId}),stop:(taskId:string)=>invoke<TaskSnapshot>('stop_task',{taskId}),restart:(taskId:string)=>invoke<TaskSnapshot>('restart_task',{taskId}),respond:(taskId:string,requestId:string,value:string|null,confirmed:boolean|null,cancelled:boolean)=>invoke<TaskSnapshot>('respond_ui',{taskId,requestId,value,confirmed,cancelled}),roots:(taskId:string)=>invoke<TaskRoot[]>('task_roots',{taskId}),isolate:(taskId:string)=>invoke<TaskRoot[]>('isolate_task',{taskId}),cleanupWorktrees:(taskId:string)=>invoke<TaskRoot[]>('cleanup_worktrees',{taskId}),recoverWorktrees:(taskId:string)=>invoke<TaskRoot[]>('recover_worktrees',{taskId}),observer:()=>invoke<ObserverInfo>('observer_info')};
 export function hostError(e:unknown):HostError{if(typeof e==='object'&&e&&'message'in e){const v=e as any;return{code:v.code||'host_error',message:String(v.message),suggestion:v.suggestion}}return{code:'host_unavailable',message:String(e||'无法连接桌面 Host'),suggestion:'请检查 Host 进程。'}}
 export const recoverSession=(taskId:string,confirmed:boolean)=>invoke<string>('recover_session',{taskId,confirmed});
@@ -18,6 +42,7 @@ export const modelConfig={apply:()=>invoke<{applied:string[];skipped:string[];er
 import type {DirectoryPage,FilePreview,Attachment,TrajectoryPage,TrajectoryImageData} from '../../../packages/host-contract/src';
 export const trajectory={read:(taskId:string,cursor:string|null=null,after=false)=>invoke<TrajectoryPage>('task_trajectory',{taskId,cursor,after}),image:(taskId:string,recordId:string,imageId:string)=>invoke<TrajectoryImageData>('task_trajectory_image',{taskId,recordId,imageId})};
 export const resources={
+ search:searchFiles,
  list:(taskId:string,rootIndex:number,path:string)=>invoke<DirectoryPage>('list_task_files',{taskId,rootIndex,path}),
  preview:(taskId:string,rootIndex:number,path:string)=>invoke<FilePreview>('preview_task_file',{taskId,rootIndex,path}),
  attachments:(taskId:string)=>invoke<Attachment[]>('task_attachments',{taskId}),
@@ -35,6 +60,15 @@ export const taskRuntime={
  action:(taskId:string,action:'start'|'stop'|'restart'|'cancel',expectedRunId:string|null)=>invoke<RuntimeTaskInfo>('runtime_action',{taskId,action,expectedRunId}),
  releaseIdle:()=>invoke<string[]>('runtime_release_idle'),
  command:(taskId:string)=>invoke<RuntimeCommand>('runtime_command',{taskId}),
+ send:(taskId:string,action:'prompt'|'steer'|'follow_up'|'abort_and_prompt',message:string,streamingBehavior?:'steer'|'followUp')=>invoke<TaskSnapshot>('runtime_send',{taskId,action,message,streamingBehavior}),
+ setMode:(taskId:string,modeType:'steering'|'follow_up'|'interrupt',mode:'all'|'one-at-a-time'|'immediate'|'wait')=>invoke<TaskSnapshot>('runtime_set_mode',{taskId,modeType,mode}),
+ setToggle:(taskId:string,setting:'auto_compaction'|'auto_retry',enabled:boolean)=>invoke<TaskSnapshot>('runtime_set_toggle',{taskId,setting,enabled}),
+ compact:(taskId:string,customInstructions?:string)=>invoke<TaskSnapshot>('runtime_compact',{taskId,customInstructions}),
+ abortRetry:(taskId:string)=>invoke<TaskSnapshot>('runtime_abort_retry',{taskId}),
+ commands:(taskId:string)=>invoke<TaskSnapshot>('runtime_commands',{taskId}),
+ subagents:(taskId:string)=>invoke<TaskSnapshot>('runtime_subagents',{taskId}),
+ subagentMessages:(taskId:string,subagentId?:string,sessionFile?:string,fromByte?:number)=>invoke<unknown>('runtime_subagent_messages',{taskId,subagentId,sessionFile,fromByte}),
+ setThinking:(taskId:string,level:import('../../../packages/host-contract/src').ThinkingLevel)=>invoke<TaskSnapshot>('runtime_set_thinking',{taskId,level}),
 };
 
 export const downloadSession=(taskId:string)=>invoke<string|null>('download_task_session',{taskId});
@@ -44,3 +78,5 @@ export const openInApp={
  icon:(appId:string)=>invoke<string>('open_in_app_icon',{appId}),
  open:(taskId:string,appId:string)=>invoke<void>('open_in_app',{taskId,appId}),
 };
+
+export const hostCapabilities=()=>invoke<HostCapabilities>('host_capabilities');

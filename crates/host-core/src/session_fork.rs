@@ -1,6 +1,6 @@
 //! Fork a finalized conversation boundary into a new OMP v3 session.
 //! No RPC session-changing command is sent to the source runtime.
-use crate::{HostError, Workbench, runtime::Result, session::session_header, store::TaskRecord};
+use crate::{HostError, RpcQuery, Workbench, runtime::Result, session::session_header, store::TaskRecord};
 use crate::session_export::{blob_path, read_file};
 use base64::Engine;
 use serde_json::{Value, json};
@@ -115,7 +115,7 @@ impl Workbench {
                 if !matches!(snapshot.status.as_str(), "ready" | "idle" | "interrupted") || !snapshot.pending_ui.is_empty() {
                     return Err(HostError::new("task_busy", "请等待当前生成或审批结束后 Fork"));
                 }
-                let state = self.runtime.query(id, "get_state", json!({})).await?;
+                let state = self.runtime.query(id, RpcQuery::GetState, json!({})).await?;
                 if state["isStreaming"] != false || state["isCompacting"] != false || state["queuedMessageCount"] != 0 {
                     return Err(HostError::new("task_busy", "请等待生成、压缩和排队消息结束后 Fork"));
                 }

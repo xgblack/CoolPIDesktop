@@ -1,4 +1,4 @@
-use crate::{HostError, TaskSnapshot, Workbench, files, runtime::Result};
+use crate::{HostError, RpcRequest, TaskSnapshot, Workbench, files, runtime::Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -215,6 +215,6 @@ impl Workbench {
         ids: &[String],
     ) -> Result<TaskSnapshot> {
         let payload = self.attachment_prompt(task, message, ids).await?;
-        self.request(task, "prompt", payload).await
+        self.request(task, RpcRequest::Prompt, payload).await
     }
 }

@@ -18,7 +18,7 @@ try {
    const runs={},runtimeTasks={};let connection;const extra={};
    const officialTitlePrompt='Write a ~5 word title for the next user message.\n- You MUST ONLY answer with the title, inside the <title> tag.\n- If the message is only a greeting, answer `<title/>`.\n\n<examples>\n[User] <user>hey</user>\n[AI]   <title/>\n</examples>';
    let customTitlePrompt=null;
-   const runtimeInfo=id=>({taskId:id,runId:id+'-run',status:runs[id]?.status??'ready',owner:'desktop',pid:id==='a'?41820:41821,startedAt:Date.now()-45000,idleSince:null,keepAlive:false,autoStartSuppressed:false,executable:'/opt/homebrew/bin/omp',version:'18.1.15',error:null});
+   const runtimeInfo=id=>({taskId:id,runId:id+'-run',status:runs[id]?.status??'ready',owner:'desktop',pid:id==='a'?41820:41821,startedAt:Date.now()-45000,idleSince:null,keepAlive:false,autoStartSuppressed:false,executable:'/opt/homebrew/bin/omp',version:'18.1.20',error:null});
    window.WebSocket=class {
     constructor(){connection=this;setTimeout(()=>this.onopen?.(),0);}
     send(){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'snapshot',tasks:Object.values(runs)})}),0);}
@@ -66,7 +66,7 @@ try {
     case 'select_project_model':return null;
     case 'model_config_verify':return{defaultModel:'test/qwen3.7-flash',models:[{provider:'test',id:'qwen3.7-flash'},{provider:'test',id:'another-model'}],stage:'loaded',message:'loaded'};
     case 'model_config_load':return{path:'/isolated/models.yml',exists:false,revision:'missing',providers:[]};
-    case 'runtime_status':return{status:'model_required',version:'18.1.15',error:{code:'model_required',message:'没有可用模型',suggestion:'请先配置 OMP 模型。'}};
+    case 'runtime_status':return{status:'model_required',version:'18.1.20',error:{code:'model_required',message:'没有可用模型',suggestion:'请先配置 OMP 模型。'}};
     default:throw{code:'fixture_unsupported',message:cmd};
    }}};
   });
@@ -104,11 +104,11 @@ try {
   await openSidebar();
   await page.getByRole('button',{name:/运行管理.*个进程/}).click();
   await page.getByRole('region',{name:'本机运行管理'}).waitFor();
-  assert.equal(await page.locator('.settings-navigation button[aria-pressed="true"]').innerText(),'运行管理');
+  assert.equal(await page.locator('.settings-navigation button[aria-pressed="true"]').innerText(),'Runtime');
   await page.getByText('当前没有 OMP 运行进程。',{exact:false}).waitFor();
   assert.equal(await page.getByRole('button',{name:'释放后台空闲进程',exact:true}).isDisabled(),true);
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-runtime-empty.png'});
-  await page.getByRole('button',{name:'标题生成',exact:true}).click();
+  await page.getByRole('button',{name:'常规',exact:true}).click();
   const titlePromptField=page.getByLabel('系统提示词');
   await titlePromptField.waitFor();
   assert.match(await titlePromptField.inputValue(),/^Write a ~5 word title/);
@@ -384,7 +384,7 @@ try {
   if(width<1024)await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'审批模式',exact:true}).filter({hasText:'自动批准'}).waitFor();
   await openSidebar();await page.getByRole('button',{name:/设置 本机 OMP/}).click();
-  await page.getByRole('button',{name:'运行管理',exact:true}).click();
+  await page.getByRole('button',{name:'Runtime',exact:true}).click();
   await page.getByRole('button',{name:'检测 OMP',exact:true}).click();await page.getByText('没有可用模型',{exact:true}).waitFor();
   await page.screenshot({animations:'disabled',path:output+'/'+width+'-'+height+'-'+theme+'-settings.png'});
   await page.keyboard.press('Escape');

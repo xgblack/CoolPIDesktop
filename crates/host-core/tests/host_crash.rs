@@ -30,7 +30,7 @@ async fn crash_child() {
     let s = w.continue_task(&t.id).await.unwrap();
     w.request(
         &t.id,
-        "prompt",
+        host_core::RpcRequest::Prompt,
         json!({"message":"Remember CRASH-RESTORE-47. Reply SAVED; no tools."}),
     )
     .await

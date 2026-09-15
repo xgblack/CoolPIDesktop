@@ -66,7 +66,7 @@ async fn real_omp_loads_fork_and_keeps_source_binding() {
         assert!(history.to_string().contains("FORK_KEEP"));assert!(!history.to_string().contains("FORK_EXCLUDE"));
         assert_eq!(std::fs::read(&source).unwrap(),raw);
         assert_eq!(w.store.task(&id).await?.session_id.as_deref(),Some("source-session"));
-        w.request(&fork.id,"prompt",json!({"message":"What exact marker were you asked to remember? Reply only with the marker, no tools."})).await?;
+        w.request(&fork.id,host_core::RpcRequest::Prompt,json!({"message":"What exact marker were you asked to remember? Reply only with the marker, no tools."})).await?;
         tokio::time::timeout(std::time::Duration::from_secs(90),async {
             loop {
                 let state=w.runtime.snapshot(&fork.id).await.unwrap();

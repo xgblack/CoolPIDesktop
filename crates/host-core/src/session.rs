@@ -2,7 +2,7 @@ use crate::git::{self, GitDiff, GitStatus};
 use crate::runtime::Result;
 use crate::store::{Store, TaskRecord};
 use crate::terminal::TerminalService;
-use crate::{HostError, LaunchOptions, TaskManager, TaskSnapshot};
+use crate::{HostError, LaunchOptions, RpcQuery, RpcRequest, TaskManager, TaskSnapshot};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -113,6 +113,144 @@ impl Workbench {
         }
         info
     }
+
+    pub async fn login_providers(&self, task_id: &str) -> Result<Value> {
+        let response = self
+            .runtime
+            .query(task_id, RpcQuery::GetLoginProviders, json!({}))
+            .await?;
+        if !response["providers"].is_array() {
+            return Err(HostError::new(
+                "provider_response_invalid",
+                "OMP returned an invalid login provider list",
+            ));
+        }
+        Ok(response)
+    }
+
+    pub async fn login_provider(&self, task_id: &str, provider_id: &str) -> Result<Value> {
+        if provider_id.is_empty()
+            || provider_id.len() > 128
+            || !provider_id.is_ascii()
+            || provider_id.chars().any(char::is_whitespace)
+        {
+            return Err(HostError::new(
+                "invalid_provider",
+                "Provider id must be 1-128 ASCII characters without whitespace",
+            ));
+        }
+        let response = self
+            .runtime
+            .query(
+                task_id,
+                RpcQuery::LoginProvider,
+                json!({"providerId":provider_id}),
+            )
+            .await?;
+        if response["providerId"] != provider_id {
+            return Err(HostError::new(
+                "provider_response_invalid",
+                "OMP login response did not match the requested provider",
+            ));
+        }
+        Ok(response)
+    }
+
+    async fn ecosystem_context(&self, project_id: Option<&str>) -> Result<(PathBuf, PathBuf)> {
+        let saved = self.store.executable().await?;
+        let executable = crate::resolve_executable(None, saved.as_deref().map(Path::new))?;
+        crate::probe(&executable).await?;
+        let cwd = if let Some(project_id) = project_id {
+            let project = self
+                .store
+                .projects()
+                .await?
+                .into_iter()
+                .find(|project| project.id == project_id)
+                .ok_or_else(|| HostError::new("project_not_found", project_id))?;
+            if !project.trusted {
+                return Err(HostError::new(
+                    "project_untrusted",
+                    "Confirm project trust before loading project plugins",
+                ));
+            }
+            crate::workspace::validate_roots(&project.roots)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| HostError::new("directory_invalid", "Project has no root"))?
+        } else {
+            self.data.clone()
+        };
+        Ok((executable, cwd))
+    }
+
+    pub async fn provider_usage(&self) -> Result<Value> {
+        let (executable, cwd) = self.ecosystem_context(None).await?;
+        crate::ecosystem::usage(&executable, &cwd).await
+    }
+
+    pub async fn logout_provider(&self, provider_id: &str, confirmed: bool) -> Result<()> {
+        if !confirmed {
+            return Err(HostError::new(
+                "confirmation_required",
+                "Provider logout requires explicit confirmation",
+            ));
+        }
+        let _guard = self.gate.lock().await;
+        let (executable, cwd) = self.ecosystem_context(None).await?;
+        crate::ecosystem::logout_provider(&executable, &cwd, provider_id).await
+    }
+
+    pub async fn plugin_overview(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<crate::ecosystem::PluginOverview> {
+        let (executable, cwd) = self.ecosystem_context(project_id).await?;
+        crate::ecosystem::plugin_overview(&executable, &cwd).await
+    }
+
+    pub async fn set_plugin_enabled(
+        &self,
+        project_id: Option<&str>,
+        plugin_id: &str,
+        enabled: bool,
+        scope: &str,
+    ) -> Result<Value> {
+        let _guard = self.gate.lock().await;
+        if scope == "project" && project_id.is_none() {
+            return Err(HostError::new(
+                "invalid_plugin_scope",
+                "Project scope requires a selected project",
+            ));
+        }
+        let (executable, cwd) = self.ecosystem_context(project_id).await?;
+        crate::ecosystem::set_plugin_enabled(&executable, &cwd, plugin_id, enabled, scope).await
+    }
+
+    pub async fn mutate_plugin(
+        &self,
+        project_id: Option<&str>,
+        action: &str,
+        plugin_id: &str,
+        scope: &str,
+        confirmed: bool,
+    ) -> Result<crate::ecosystem::PluginOverview> {
+        if !confirmed {
+            return Err(HostError::new(
+                "confirmation_required",
+                "Plugin installation, upgrade, and removal require explicit confirmation",
+            ));
+        }
+        let _guard = self.gate.lock().await;
+        if scope == "project" && project_id.is_none() {
+            return Err(HostError::new(
+                "invalid_plugin_scope",
+                "Project scope requires a selected project",
+            ));
+        }
+        let (executable, cwd) = self.ecosystem_context(project_id).await?;
+        crate::ecosystem::mutate_plugin(&executable, &cwd, action, plugin_id, scope).await
+    }
     pub async fn title_prompt_settings(&self) -> Result<crate::TitlePromptSettings> {
         Ok(crate::auto_title::prompt_settings(
             self.store
@@ -146,10 +284,7 @@ impl Workbench {
                     ));
                 }
                 self.store
-                    .set_setting(
-                        crate::auto_title::TITLE_PROMPT_SETTING,
-                        prompt.to_owned(),
-                    )
+                    .set_setting(crate::auto_title::TITLE_PROMPT_SETTING, prompt.to_owned())
                     .await?;
             }
             None => {
@@ -219,7 +354,9 @@ impl Workbench {
                 ));
             }
         }
-        if let Some(level) = &task.thinking { self.validate_thinking(&task, level).await?; }
+        if let Some(level) = &task.thinking {
+            self.validate_thinking(&task, level).await?;
+        }
         let run_id = uuid::Uuid::new_v4().to_string();
         let options = LaunchOptions {
             approval_mode: task.approval_mode.clone(),
@@ -261,7 +398,10 @@ impl Workbench {
                     }));
                 }
                 if snapshot.status == "ready" {
-                    let mut state = self.runtime.query(id, "get_state", json!({})).await?;
+                    let mut state = self
+                        .runtime
+                        .query(id, RpcQuery::GetState, json!({}))
+                        .await?;
                     if let Some(selected) = &task.model {
                         let (provider, model_id) = selected.split_once('/').ok_or_else(|| {
                             HostError::new("model_unavailable", "Invalid model selection")
@@ -272,11 +412,14 @@ impl Workbench {
                             self.runtime
                                 .query(
                                     id,
-                                    "set_model",
+                                    RpcQuery::SetModel,
                                     json!({"provider":provider,"modelId":model_id}),
                                 )
                                 .await?;
-                            state = self.runtime.query(id, "get_state", json!({})).await?;
+                            state = self
+                                .runtime
+                                .query(id, RpcQuery::GetState, json!({}))
+                                .await?;
                             if state["model"]["provider"] != provider
                                 || state["model"]["id"] != model_id
                             {
@@ -332,7 +475,12 @@ impl Workbench {
                         .await?;
                     if task.session_id.is_none() {
                         if let Some(model) = &task.model {
-                            self.store.set_setting(&format!("project_model:{}", task.project_id), model.clone()).await?;
+                            self.store
+                                .set_setting(
+                                    &format!("project_model:{}", task.project_id),
+                                    model.clone(),
+                                )
+                                .await?;
                         }
                     }
                     return self.runtime.snapshot(id).await;
@@ -408,7 +556,10 @@ impl Workbench {
                 continue;
             }
             // State can advance while the UI is reading; check OMP before stopping.
-            let state = self.runtime.query(&id, "get_state", json!({})).await?;
+            let state = self
+                .runtime
+                .query(&id, RpcQuery::GetState, json!({}))
+                .await?;
             if state["isStreaming"] == true || state["isCompacting"] == true {
                 skipped.push(id);
                 continue;
@@ -444,38 +595,74 @@ impl Workbench {
         self.check_handoff(id).await?;
         let task = self.store.task(id).await?;
         if task.archived {
-            return Err(HostError::new("task_archived", "Restore task before changing approval mode"));
+            return Err(HostError::new(
+                "task_archived",
+                "Restore task before changing approval mode",
+            ));
         }
-        if task.approval_mode == mode { return Ok(task); }
+        if task.approval_mode == mode {
+            return Ok(task);
+        }
         let snapshot = self.runtime.snapshot(id).await.ok();
-        let alive = snapshot.as_ref().is_some_and(|s| !matches!(s.status.as_str(), "stopped" | "failed"));
+        let alive = snapshot
+            .as_ref()
+            .is_some_and(|s| !matches!(s.status.as_str(), "stopped" | "failed"));
         if alive {
             let snapshot = snapshot.as_ref().unwrap();
-            if !matches!(snapshot.status.as_str(), "ready" | "idle" | "interrupted") || !snapshot.pending_ui.is_empty() {
-                return Err(HostError::new("task_busy", "等待当前生成或审批结束后再切换审批模式"));
+            if !matches!(snapshot.status.as_str(), "ready" | "idle" | "interrupted")
+                || !snapshot.pending_ui.is_empty()
+            {
+                return Err(HostError::new(
+                    "task_busy",
+                    "等待当前生成或审批结束后再切换审批模式",
+                ));
             }
-            let state = self.runtime.query(id, "get_state", json!({})).await?;
+            let state = self
+                .runtime
+                .query(id, RpcQuery::GetState, json!({}))
+                .await?;
             // Unknown state must not be interpreted as idle at this permission boundary.
             let current = self.runtime.snapshot(id).await?;
-            if state["isStreaming"] != false || state["isCompacting"] != false || state["queuedMessageCount"] != 0
-                || !current.pending_ui.is_empty() || current.tools.iter().any(|tool| tool.status == "running") {
-                return Err(HostError::new("task_busy", "任务仍在生成、压缩或有排队消息，无法切换审批模式"));
+            if state["isStreaming"] != false
+                || state["isCompacting"] != false
+                || state["queuedMessageCount"] != 0
+                || !current.pending_ui.is_empty()
+                || current.tools.iter().any(|tool| tool.status == "running")
+            {
+                return Err(HostError::new(
+                    "task_busy",
+                    "任务仍在生成、压缩或有排队消息，无法切换审批模式",
+                ));
             }
-            if task.session_file.as_ref().is_none_or(|file| !file.is_file()) {
-                return Err(HostError::new("session_not_saved", "会话尚未落盘，请在首次回复完成后切换审批模式"));
+            if task
+                .session_file
+                .as_ref()
+                .is_none_or(|file| !file.is_file())
+            {
+                return Err(HostError::new(
+                    "session_not_saved",
+                    "会话尚未落盘，请在首次回复完成后切换审批模式",
+                ));
             }
             self.store.validate_task_roots(id).await?;
             let header = session_header(task.session_file.as_ref().unwrap())?;
             if header["id"].as_str() != task.session_id.as_deref() {
-                return Err(HostError::new("session_mismatch", "Bound session identity changed"));
+                return Err(HostError::new(
+                    "session_mismatch",
+                    "Bound session identity changed",
+                ));
             }
             self.runtime.stop(id).await?;
-            self.store.end_run(&snapshot.run_id, "stopped", None).await?;
+            self.store
+                .end_run(&snapshot.run_id, "stopped", None)
+                .await?;
             self.runtime.forget_stopped(id).await?;
         }
         // Persist the requested policy before starting. On failure, the old process
         // stays stopped and retries use the new policy, never a silent rollback.
-        self.store.set_setting(&format!("task_approval:{id}"), mode.unwrap_or_default()).await?;
+        self.store
+            .set_setting(&format!("task_approval:{id}"), mode.unwrap_or_default())
+            .await?;
         if alive {
             self.continue_locked(id).await.map_err(|e| HostError::new(
                 "approval_switch_failed", format!("审批模式已保存，但 OMP 重启失败（{}）。修复后继续任务，新模式将在启动时应用。", e.code)
@@ -486,13 +673,24 @@ impl Workbench {
     pub async fn request(
         &self,
         id: &str,
-        typ: &'static str,
+        command: RpcRequest,
         payload: Value,
     ) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
-        if typ == "prompt" {
+        if matches!(
+            command,
+            RpcRequest::Prompt
+                | RpcRequest::Steer
+                | RpcRequest::FollowUp
+                | RpcRequest::AbortAndPrompt
+        ) {
             self.check_handoff(id).await?;
-            let state = self.runtime.query(id, "get_state", json!({})).await?;
+        }
+        if matches!(command, RpcRequest::Prompt | RpcRequest::AbortAndPrompt) {
+            let state = self
+                .runtime
+                .query(id, RpcQuery::GetState, json!({}))
+                .await?;
             if !state["model"].is_object() {
                 return Err(HostError::new(
                     "model_required",
@@ -500,12 +698,63 @@ impl Workbench {
                 ));
             }
         }
-        self.runtime.request(id, typ, payload.clone()).await?;
-        if typ == "prompt" {
+        self.runtime.request(id, command, payload.clone()).await?;
+        if command == RpcRequest::Prompt {
             if let Some(message) = payload["message"].as_str() {
                 self.schedule_auto_title(id, message.to_owned()).await;
             }
         }
+        self.runtime.snapshot(id).await
+    }
+
+    pub async fn runtime_query(
+        &self,
+        id: &str,
+        command: RpcQuery,
+        payload: Value,
+    ) -> Result<TaskSnapshot> {
+        let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        self.runtime.query(id, command, payload).await?;
+        self.runtime.snapshot(id).await
+    }
+
+    pub async fn runtime_subagent_messages(
+        &self,
+        id: &str,
+        subagent_id: Option<String>,
+        session_file: Option<String>,
+        from_byte: Option<u64>,
+    ) -> Result<Value> {
+        let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        let mut payload = json!({});
+        if let Some(value) = subagent_id {
+            payload["subagentId"] = json!(value);
+        }
+        if let Some(value) = session_file {
+            payload["sessionFile"] = json!(value);
+        }
+        if let Some(value) = from_byte {
+            payload["fromByte"] = json!(value);
+        }
+        self.runtime
+            .query(id, RpcQuery::GetSubagentMessages, payload)
+            .await
+    }
+
+    pub async fn set_runtime_thinking(&self, id: &str, level: String) -> Result<TaskSnapshot> {
+        let _guard = self.gate.lock().await;
+        self.check_handoff(id).await?;
+        let task = self.store.task(id).await?;
+        self.validate_thinking(&task, &level).await?;
+        self.runtime
+            .query(id, RpcQuery::SetThinkingLevel, json!({"level":level}))
+            .await?;
+        self.store.set_task_thinking(id, Some(level)).await?;
+        self.runtime
+            .query(id, RpcQuery::GetState, json!({}))
+            .await?;
         self.runtime.snapshot(id).await
     }
 
@@ -514,76 +763,188 @@ impl Workbench {
             Ok(task) if task.title_source == "initial" => task,
             _ => return,
         };
-        if crate::auto_title::low_signal(&message) { return; }
+        if crate::auto_title::low_signal(&message) {
+            return;
+        }
         let mut pending = self.auto_titles.lock().await;
-        if !pending.insert(id.to_owned()) { return; }
+        if !pending.insert(id.to_owned()) {
+            return;
+        }
         let workbench = self.clone();
         let id = id.to_owned();
         tokio::spawn(async move {
-            if let Err(error) = workbench.generate_auto_title(&id, &task.roots, message).await {
+            if let Err(error) = workbench
+                .generate_auto_title(&id, &task.roots, message)
+                .await
+            {
                 eprintln!("auto title unavailable for task {} ({})", id, error.code);
             }
             workbench.auto_titles.lock().await.remove(&id);
         });
     }
 
-    async fn generate_auto_title(&self, id: &str, roots: &[PathBuf], message: String) -> Result<()> {
+    async fn generate_auto_title(
+        &self,
+        id: &str,
+        roots: &[PathBuf],
+        message: String,
+    ) -> Result<()> {
         let task = self.store.task(id).await?;
-        if task.title_source != "initial" || task.session_id.is_none() { return Ok(()); }
+        if task.title_source != "initial" || task.session_id.is_none() {
+            return Ok(());
+        }
         let snapshot = self.runtime.snapshot(id).await?;
-        if matches!(snapshot.status.as_str(), "failed" | "stopped") { return Ok(()); }
+        if matches!(snapshot.status.as_str(), "failed" | "stopped") {
+            return Ok(());
+        }
         let runtime_session = snapshot.runtime.capabilities["state"]["sessionId"].as_str();
-        if runtime_session != task.session_id.as_deref() { return Err(HostError::new("session_mismatch", "OMP session changed before title update")); }
-        let Some(root) = roots.first() else { return Ok(()); };
-        let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?)));
+        if runtime_session != task.session_id.as_deref() {
+            return Err(HostError::new(
+                "session_mismatch",
+                "OMP session changed before title update",
+            ));
+        }
+        let Some(root) = roots.first() else {
+            return Ok(());
+        };
+        let model = snapshot.runtime.capabilities["state"]["model"]
+            .as_object()
+            .and_then(|model| {
+                Some(format!(
+                    "{}/{}",
+                    model.get("provider")?.as_str()?,
+                    model.get("id")?.as_str()?
+                ))
+            });
         let title_prompt = self.title_prompt_settings().await?.prompt;
-        let Some(title) = crate::auto_title::generate(Path::new(&snapshot.runtime.executable), root, model.as_deref(), &message, &title_prompt).await? else { return Ok(()); };
+        let Some(title) = crate::auto_title::generate(
+            Path::new(&snapshot.runtime.executable),
+            root,
+            model.as_deref(),
+            &message,
+            &title_prompt,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
 
         let _guard = self.gate.lock().await;
         let latest = self.store.task(id).await?;
-        if latest.title_source != "initial" { return Ok(()); }
-        let current = self.runtime.snapshot(id).await?;
-        if matches!(current.status.as_str(), "failed" | "stopped") { return Ok(()); }
-        if current.runtime.capabilities["state"]["sessionId"].as_str() != latest.session_id.as_deref() {
-            return Err(HostError::new("session_mismatch", "OMP session changed before title update"));
+        if latest.title_source != "initial" {
+            return Ok(());
         }
-        self.runtime.request(id, "set_session_name", json!({"name": title})).await?;
+        let current = self.runtime.snapshot(id).await?;
+        if matches!(current.status.as_str(), "failed" | "stopped") {
+            return Ok(());
+        }
+        if current.runtime.capabilities["state"]["sessionId"].as_str()
+            != latest.session_id.as_deref()
+        {
+            return Err(HostError::new(
+                "session_mismatch",
+                "OMP session changed before title update",
+            ));
+        }
+        self.runtime
+            .request(id, RpcRequest::SetSessionName, json!({"name": title}))
+            .await?;
         if self.store.update_auto_title(id, &title).await? {
-            self.runtime.publish_event(id, "task_title_update", json!({"title":title,"source":"auto"})).await?;
+            self.runtime
+                .publish_event(
+                    id,
+                    "task_title_update",
+                    json!({"title":title,"source":"auto"}),
+                )
+                .await?;
         }
         Ok(())
     }
     pub async fn suggest_task_title(&self, id: &str) -> Result<String> {
         let task = self.store.task(id).await?;
-        if task.archived { return Err(HostError::new("task_archived", "请先恢复归档任务，再生成标题")); }
+        if task.archived {
+            return Err(HostError::new(
+                "task_archived",
+                "请先恢复归档任务，再生成标题",
+            ));
+        }
         let roots = self.store.validate_task_roots(id).await?;
-        let file = task.session_file.clone().ok_or_else(|| HostError::new("title_context_missing", "当前任务还没有可用于生成标题的会话内容"))?;
-        let session_id = task.session_id.clone().ok_or_else(|| HostError::new("title_context_missing", "当前任务还没有可用于生成标题的会话内容"))?;
+        let file = task.session_file.clone().ok_or_else(|| {
+            HostError::new(
+                "title_context_missing",
+                "当前任务还没有可用于生成标题的会话内容",
+            )
+        })?;
+        let session_id = task.session_id.clone().ok_or_else(|| {
+            HostError::new(
+                "title_context_missing",
+                "当前任务还没有可用于生成标题的会话内容",
+            )
+        })?;
         let context = tokio::task::spawn_blocking(move || {
             let history = crate::trajectory_history::read(&file, &session_id)?;
-            crate::auto_title::conversation_context(&history).ok_or_else(|| HostError::new("title_context_missing", "当前会话没有足够的有效对话内容来生成标题"))
-        }).await.map_err(|e| HostError::new("session_invalid", e))??;
-        let live = self.runtime.snapshot(id).await.ok().filter(|snapshot| matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted"));
+            crate::auto_title::conversation_context(&history).ok_or_else(|| {
+                HostError::new(
+                    "title_context_missing",
+                    "当前会话没有足够的有效对话内容来生成标题",
+                )
+            })
+        })
+        .await
+        .map_err(|e| HostError::new("session_invalid", e))??;
+        let live = self.runtime.snapshot(id).await.ok().filter(|snapshot| {
+            matches!(
+                snapshot.status.as_str(),
+                "starting" | "ready" | "idle" | "running" | "interrupted"
+            )
+        });
         let (executable, model) = if let Some(snapshot) = live {
-            let model = snapshot.runtime.capabilities["state"]["model"].as_object().and_then(|model| Some(format!("{}/{}", model.get("provider")?.as_str()?, model.get("id")?.as_str()?))).or(task.model.clone());
+            let model = snapshot.runtime.capabilities["state"]["model"]
+                .as_object()
+                .and_then(|model| {
+                    Some(format!(
+                        "{}/{}",
+                        model.get("provider")?.as_str()?,
+                        model.get("id")?.as_str()?
+                    ))
+                })
+                .or(task.model.clone());
             (PathBuf::from(snapshot.runtime.executable), model)
         } else {
             let saved = self.store.executable().await?;
-            (crate::resolve_executable(None, saved.as_deref().map(Path::new))?, task.model.clone())
+            (
+                crate::resolve_executable(None, saved.as_deref().map(Path::new))?,
+                task.model.clone(),
+            )
         };
         let root = roots
             .first()
             .ok_or_else(|| HostError::new("invalid_workspace", "任务没有工作目录"))?;
         let title_prompt = self.title_prompt_settings().await?.prompt;
-        crate::auto_title::generate_context(&executable, root, model.as_deref(), &context, &title_prompt).await?
-            .ok_or_else(|| HostError::new("title_unavailable", "OMP 未能从当前会话生成有效标题，请重试或手工输入"))
+        crate::auto_title::generate_context(
+            &executable,
+            root,
+            model.as_deref(),
+            &context,
+            &title_prompt,
+        )
+        .await?
+        .ok_or_else(|| {
+            HostError::new(
+                "title_unavailable",
+                "OMP 未能从当前会话生成有效标题，请重试或手工输入",
+            )
+        })
     }
     pub async fn history(&self, id: &str, cursor: Option<String>) -> Result<Value> {
         // A stopped task has no in-memory runtime, but its OMP session remains the
         // source of truth. Only use RPC while that task is actually alive.
         let task = self.store.task(id).await?;
         let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
-            matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
+            matches!(
+                snapshot.status.as_str(),
+                "starting" | "ready" | "idle" | "running" | "interrupted"
+            )
         });
         if !runtime_alive {
             return self.stored_history(&task, cursor).await;
@@ -592,7 +953,9 @@ impl Workbench {
         if let Some(cursor) = cursor {
             request["cursor"] = Value::String(cursor);
         }
-        self.runtime.query(id, "get_messages_page", request).await
+        self.runtime
+            .query(id, RpcQuery::GetMessagesPage, request)
+            .await
     }
 
     async fn stored_history(&self, task: &TaskRecord, cursor: Option<String>) -> Result<Value> {
@@ -603,9 +966,9 @@ impl Workbench {
         let offset = cursor
             .as_deref()
             .map(|value| {
-                value.parse::<usize>().map_err(|_| {
-                    HostError::new("stale_cursor", "Invalid persisted history cursor")
-                })
+                value
+                    .parse::<usize>()
+                    .map_err(|_| HostError::new("stale_cursor", "Invalid persisted history cursor"))
             })
             .transpose()?;
         tokio::task::spawn_blocking(move || {
@@ -645,9 +1008,11 @@ impl Workbench {
     /// Refreshes only usage fields OMP actually reports. It never estimates a missing value.
     pub async fn refresh_usage(&self, id: &str) -> Result<TaskSnapshot> {
         let _guard = self.gate.lock().await;
-        self.runtime.query(id, "get_state", json!({})).await?;
         self.runtime
-            .query(id, "get_session_stats", json!({}))
+            .query(id, RpcQuery::GetState, json!({}))
+            .await?;
+        self.runtime
+            .query(id, RpcQuery::GetSessionStats, json!({}))
             .await?;
         self.runtime.snapshot(id).await
     }
@@ -683,11 +1048,23 @@ impl Workbench {
         let _guard = self.gate.lock().await;
         self.check_handoff(id).await?;
         let task = self.store.task(id).await?;
-        if task.archived { return Err(HostError::new("task_archived", "请先恢复归档任务")); }
-        if self.runtime.snapshot(id).await.is_ok_and(|s| matches!(s.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")) {
-            return Err(HostError::new("task_running", "请先停止任务进程，再修改推理强度；下次启动生效"));
+        if task.archived {
+            return Err(HostError::new("task_archived", "请先恢复归档任务"));
         }
-        if let Some(value) = &level { self.validate_thinking(&task, value).await?; }
+        if self.runtime.snapshot(id).await.is_ok_and(|s| {
+            matches!(
+                s.status.as_str(),
+                "starting" | "ready" | "idle" | "running" | "interrupted"
+            )
+        }) {
+            return Err(HostError::new(
+                "task_running",
+                "请先停止任务进程，再修改推理强度；下次启动生效",
+            ));
+        }
+        if let Some(value) = &level {
+            self.validate_thinking(&task, value).await?;
+        }
         self.store.set_task_thinking(id, level).await
     }
 
@@ -697,7 +1074,20 @@ impl Workbench {
         let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
         crate::probe(&path).await?;
         let available = crate::model_config::discover(&path, &roots[0]).await?;
-        let model = available.models.iter().find(|m| task.model.as_deref() == Some(format!("{}/{}", m["provider"].as_str().unwrap_or(""), m["id"].as_str().unwrap_or("")).as_str()))
+        let model = available
+            .models
+            .iter()
+            .find(|m| {
+                task.model.as_deref()
+                    == Some(
+                        format!(
+                            "{}/{}",
+                            m["provider"].as_str().unwrap_or(""),
+                            m["id"].as_str().unwrap_or("")
+                        )
+                        .as_str(),
+                    )
+            })
             .ok_or_else(|| HostError::new("model_unavailable", "请先选择可用模型"))?;
         crate::model_config::validate_thinking(model, level)
     }
@@ -706,38 +1096,69 @@ impl Workbench {
         let _guard = self.gate.lock().await;
         self.check_handoff(id).await?;
         let runtime_alive = self.runtime.snapshot(id).await.map_or(false, |snapshot| {
-            matches!(snapshot.status.as_str(), "starting" | "ready" | "idle" | "running" | "interrupted")
+            matches!(
+                snapshot.status.as_str(),
+                "starting" | "ready" | "idle" | "running" | "interrupted"
+            )
         });
         let target = if runtime_alive {
             let snapshot = self.runtime.snapshot(id).await?;
-            snapshot.runtime.capabilities["models"].as_array().into_iter().flatten().find(|m| m["provider"] == provider && m["id"] == model_id).cloned()
+            snapshot.runtime.capabilities["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|m| m["provider"] == provider && m["id"] == model_id)
+                .cloned()
         } else {
             let roots = self.store.validate_task_roots(id).await?;
             let executable = self.store.executable().await?;
             let path = crate::resolve_executable(None, executable.as_deref().map(Path::new))?;
             crate::probe(&path).await?;
-            crate::model_config::discover(&path, &roots[0]).await?.models.into_iter().find(|m| m["provider"] == provider && m["id"] == model_id)
-        }.ok_or_else(|| HostError::new("model_unavailable", "所选模型已不可用"))?;
-        let clear_thinking = self.store.task_thinking(id).await?.is_some_and(|level| crate::model_config::validate_thinking(&target, &level).is_err());
+            crate::model_config::discover(&path, &roots[0])
+                .await?
+                .models
+                .into_iter()
+                .find(|m| m["provider"] == provider && m["id"] == model_id)
+        }
+        .ok_or_else(|| HostError::new("model_unavailable", "所选模型已不可用"))?;
+        let clear_thinking =
+            self.store.task_thinking(id).await?.is_some_and(|level| {
+                crate::model_config::validate_thinking(&target, &level).is_err()
+            });
         if runtime_alive {
             self.runtime
                 .query(
                     id,
-                    "set_model",
+                    RpcQuery::SetModel,
                     json!({"provider":provider,"modelId":model_id}),
                 )
                 .await?;
-            let state = self.runtime.query(id, "get_state", json!({})).await?;
+            let state = self
+                .runtime
+                .query(id, RpcQuery::GetState, json!({}))
+                .await?;
             if state["model"]["provider"] != provider || state["model"]["id"] != model_id {
                 return Err(HostError::new(
                     "model_unavailable",
                     "OMP model selection mismatch",
                 ));
             }
-            self.store.save_model_selection_with_thinking(id, format!("{provider}/{model_id}"), clear_thinking).await?;
+            self.store
+                .save_model_selection_with_thinking(
+                    id,
+                    format!("{provider}/{model_id}"),
+                    clear_thinking,
+                )
+                .await?;
             return Ok(state);
         }
-        self.store.save_model_selection_with_thinking(id, format!("{provider}/{model_id}"), clear_thinking).await?;
+        self.store
+            .save_model_selection_with_thinking(
+                id,
+                format!("{provider}/{model_id}"),
+                clear_thinking,
+            )
+            .await?;
         Ok(json!({"model":{"provider":provider,"id":model_id}}))
     }
     pub async fn recover_session(&self, id: &str, confirmed: bool) -> Result<String> {
@@ -837,7 +1258,11 @@ impl Workbench {
                     // live OMP session when its RPC process is available.
                     let _ = self
                         .runtime
-                        .request(id, "set_session_name", json!({"name": title.trim()}))
+                        .request(
+                            id,
+                            RpcRequest::SetSessionName,
+                            json!({"name": title.trim()}),
+                        )
                         .await;
                 }
             }
@@ -885,7 +1310,8 @@ mod tests {
     #[tokio::test]
     async fn suggested_title_reads_bound_history_without_mutating_task() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("omp-title-suggestion-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("omp-title-suggestion-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let executable = root.join("fake-omp");
         std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '<title>Review session export</title>\\n'\n").unwrap();
@@ -893,50 +1319,90 @@ mod tests {
         permissions.set_mode(0o700);
         std::fs::set_permissions(&executable, permissions).unwrap();
         let w = Workbench::open(root.join("data")).await.unwrap();
-        w.store.set_executable(executable.to_string_lossy().into_owned()).await.unwrap();
-        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
-        let task = w.store.create_task_with_model(&project.id, "Original", Some("test/model".into())).await.unwrap();
-        w.save_title_prompt(Some("Custom session title prompt".into())).await.unwrap();
+        w.store
+            .set_executable(executable.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let project = w
+            .store
+            .register_project("P", vec![root.clone()], true)
+            .await
+            .unwrap();
+        let task = w
+            .store
+            .create_task_with_model(&project.id, "Original", Some("test/model".into()))
+            .await
+            .unwrap();
+        w.save_title_prompt(Some("Custom session title prompt".into()))
+            .await
+            .unwrap();
         let file = root.join("session.jsonl");
         let header = json!({"type":"session","version":3,"id":"session","cwd":root});
         let user = json!({"type":"message","id":"u","parentId":null,"message":{"role":"user","content":"评估会话导出逻辑"}});
         let assistant = json!({"type":"message","id":"a","parentId":"u","message":{"role":"assistant","content":[{"type":"text","text":"我已经检查了持久化实现"}]}});
         std::fs::write(&file, format!("{header}\n{user}\n{assistant}\n")).unwrap();
         w.store.bind(&task.id, "session", file).await.unwrap();
-        assert_eq!(w.suggest_task_title(&task.id).await.unwrap(), "Review session export");
+        assert_eq!(
+            w.suggest_task_title(&task.id).await.unwrap(),
+            "Review session export"
+        );
         let unchanged = w.store.task(&task.id).await.unwrap();
         assert_eq!(unchanged.title, "Original");
         assert_eq!(unchanged.title_source, "user");
         assert!(w.runtime.snapshots().await.is_empty());
         let arguments = std::fs::read_to_string(executable.with_extension("args")).unwrap();
-        assert!(arguments.lines().any(|argument| argument == "Custom session title prompt"));
+        assert!(
+            arguments
+                .lines()
+                .any(|argument| argument == "Custom session title prompt")
+        );
         assert!(arguments.lines().any(|argument| argument == "test/model"));
         assert!(arguments.contains("<chat>\n<user>\n评估会话导出逻辑\n</user>"));
         assert!(arguments.contains("<assistant>\n我已经检查了持久化实现\n</assistant>\n</chat>"));
     }
     #[tokio::test]
     async fn title_suggestion_requires_matching_session_history() {
-        let root = std::env::temp_dir().join(format!("omp-title-context-errors-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("omp-title-context-errors-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let w = Workbench::open(root.join("data")).await.unwrap();
-        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
+        let project = w
+            .store
+            .register_project("P", vec![root.clone()], true)
+            .await
+            .unwrap();
         let missing = w.store.create_task(&project.id, "Missing").await.unwrap();
-        assert_eq!(w.suggest_task_title(&missing.id).await.unwrap_err().code, "title_context_missing");
+        assert_eq!(
+            w.suggest_task_title(&missing.id).await.unwrap_err().code,
+            "title_context_missing"
+        );
         let mismatch = w.store.create_task(&project.id, "Mismatch").await.unwrap();
         let file = root.join("mismatch.jsonl");
         std::fs::write(&file, format!("{}\n{}\n", json!({"type":"session","version":3,"id":"actual","cwd":root}), json!({"type":"message","id":"u","message":{"role":"user","content":"meaningful request"}}))).unwrap();
         w.store.bind(&mismatch.id, "expected", file).await.unwrap();
-        assert_eq!(w.suggest_task_title(&mismatch.id).await.unwrap_err().code, "session_mismatch");
+        assert_eq!(
+            w.suggest_task_title(&mismatch.id).await.unwrap_err().code,
+            "session_mismatch"
+        );
     }
     #[tokio::test]
     async fn title_prompt_settings_save_and_restore_official_default() {
-        let root = std::env::temp_dir().join(format!("omp-title-prompt-settings-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "omp-title-prompt-settings-{}",
+            uuid::Uuid::new_v4()
+        ));
         let w = Workbench::open(root.join("data")).await.unwrap();
         let initial = w.title_prompt_settings().await.unwrap();
         assert!(initial.is_default);
-        assert_eq!(initial.prompt, crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT);
+        assert_eq!(
+            initial.prompt,
+            crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT
+        );
 
-        let custom = w.save_title_prompt(Some("  Generate a concise title.  ".into())).await.unwrap();
+        let custom = w
+            .save_title_prompt(Some("  Generate a concise title.  ".into()))
+            .await
+            .unwrap();
         assert!(!custom.is_default);
         assert_eq!(custom.prompt, "Generate a concise title.");
         assert_eq!(
@@ -956,7 +1422,10 @@ mod tests {
 
         let restored = w.save_title_prompt(None).await.unwrap();
         assert!(restored.is_default);
-        assert_eq!(restored.prompt, crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT);
+        assert_eq!(
+            restored.prompt,
+            crate::auto_title::DEFAULT_TITLE_SYSTEM_PROMPT
+        );
     }
     #[tokio::test]
     async fn recovery_requires_unique_valid_header_and_explicit_confirmation() {
@@ -1004,10 +1473,15 @@ mod tests {
     }
     #[tokio::test]
     async fn stopped_task_reads_bound_session_without_runtime() {
-        let root = std::env::temp_dir().join(format!("omp-offline-history-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("omp-offline-history-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let w = Workbench::open(root.join("data")).await.unwrap();
-        let project = w.store.register_project("P", vec![root.clone()], true).await.unwrap();
+        let project = w
+            .store
+            .register_project("P", vec![root.clone()], true)
+            .await
+            .unwrap();
         let task = w.store.create_task(&project.id, "T").await.unwrap();
         let dir = root.join("data/sessions").join(&task.id);
         std::fs::create_dir_all(&dir).unwrap();

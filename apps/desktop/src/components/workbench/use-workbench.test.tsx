@@ -9,8 +9,17 @@ const task=(id:string):TaskRecord=>({id,projectId:'p',title:id,roots:['/tmp'],pi
 const a=task('a'),b=task('b');
 const run=(id:string):TaskSnapshot=>({taskId:id,runId:id+'-run',seq:1,status:'ready',events:[]});
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return{promise,resolve};}
-beforeEach(()=>{vi.clearAllMocks();vi.mocked(projects.list).mockResolvedValue([]);vi.mocked(records.list).mockResolvedValue([a,b]);vi.mocked(host.list).mockResolvedValue([run('a'),run('b')]);vi.mocked(records.history).mockResolvedValue({messages:[],totalMessages:0});});
-afterEach(cleanup);
+beforeEach(()=>{localStorage.clear();vi.clearAllMocks();vi.mocked(projects.list).mockResolvedValue([]);vi.mocked(records.list).mockResolvedValue([a,b]);vi.mocked(host.list).mockResolvedValue([run('a'),run('b')]);vi.mocked(records.history).mockResolvedValue({messages:[],totalMessages:0});});
+afterEach(()=>{cleanup();localStorage.clear()});
+it('restores bounded composer drafts after the workbench remounts',async()=>{
+ const first=renderHook(useWorkbench);await waitFor(()=>expect(first.result.current.loading).toBe(false));
+ act(()=>first.result.current.setDraft('a','persisted draft'));
+ await waitFor(()=>expect(localStorage.getItem('cool-pi-desktop.composer-drafts')).toContain('persisted draft'));
+ first.unmount();
+ const second=renderHook(useWorkbench);
+ expect(second.result.current.drafts.a).toBe('persisted draft');
+ second.unmount();
+});
 it('isolates drafts and a delayed send; duplicate send cannot start another request',async()=>{
  const pending=deferred<TaskSnapshot>();vi.mocked(sendPrompt).mockReturnValue(pending.promise);
  const {result}=renderHook(useWorkbench);await waitFor(()=>expect(result.current.loading).toBe(false));

@@ -11,7 +11,7 @@ use tokio::{
     time::timeout,
 };
 
-pub const MIN_VERSION: &str = "18.1.14";
+pub const MIN_VERSION: &str = "18.1.20";
 pub const DEADLINE: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
@@ -279,13 +279,13 @@ mod tests {
     use super::*;
     #[test]
     fn version_policy() {
-        assert_eq!(parse_version("omp/18.1.14\n").unwrap(), "18.1.14");
+        assert_eq!(parse_version("omp/18.1.20\n").unwrap(), "18.1.20");
         assert_eq!(
-            parse_version("omp v18.1.13").unwrap_err().code,
+            parse_version("omp v18.1.19").unwrap_err().code,
             "version_unsupported"
         );
         assert!(parse_version("unknown").is_err());
-        assert!(parse_version("18.1.14 19.0.0").is_err());
+        assert!(parse_version("18.1.20 19.0.0").is_err());
     }
     #[test]
     fn invalid_explicit_never_falls_back() {

@@ -18,10 +18,10 @@ export function activitySummary(value:unknown):string {
  }
  return '';
 }
-export function ActivityRow({kind='tool',name='',preview='',state,label,children}:{kind?:'tool'|'thinking'|'context'|'progress';name?:string;preview?:string;state?:string;label?:string;children?:ReactNode}){
+export function ActivityRow({kind='tool',name='',preview='',state,label,children,defaultOpen=false}:{kind?:'tool'|'thinking'|'context'|'progress';name?:string;preview?:string;state?:string;label?:string;children?:ReactNode;defaultOpen?:boolean}){
  const Icon:ComponentType<{size?:number}>=kind==='thinking'?Brain:kind==='context'?FileText:kind==='progress'?CircleDashed:toolIcon(name);
  const failed=state==='failed';
- return <details className="activity-row" data-state={state}>
+ return <details className="activity-row" data-state={state} open={defaultOpen||undefined}>
   <summary><span className="activity-icon"><Icon size={14}/></span><span className="activity-label">{label??(kind==='thinking'?'思考':kind==='context'?'上下文':name||'工具')}</span><span className="activity-preview">{preview}</span>{state&&<span className="activity-state">{failed&&<AlertCircle size={12}/>}{{running:'执行中',succeeded:'已完成',failed:'失败',cancelled:'已取消',unknown:'状态未知'}[state]}</span>}<ChevronRight size={12} className="activity-chevron"/></summary>
   <div className="activity-body">{children}</div>
  </details>;

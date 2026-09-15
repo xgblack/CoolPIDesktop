@@ -28,7 +28,11 @@ async fn ui_response_validates_correlates_and_expires() {
         .await
         .unwrap();
         worker
-            .request("approval", "prompt", json!({"message":"confirm"}))
+            .request(
+                "approval",
+                host_core::RpcRequest::Prompt,
+                json!({"message":"confirm"}),
+            )
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -47,7 +51,7 @@ async fn ui_response_validates_correlates_and_expires() {
         let invalid = worker
             .request(
                 "approval",
-                "extension_ui_response",
+                host_core::RpcRequest::ExtensionUiResponse,
                 json!({"id":"approval-1","confirmed":"yes"}),
             )
             .await
@@ -60,7 +64,7 @@ async fn ui_response_validates_correlates_and_expires() {
         worker
             .request(
                 "approval",
-                "extension_ui_response",
+                host_core::RpcRequest::ExtensionUiResponse,
                 json!({"id":"approval-1","confirmed":false}),
             )
             .await
@@ -82,7 +86,7 @@ async fn ui_response_validates_correlates_and_expires() {
         let expired = worker
             .request(
                 "approval",
-                "extension_ui_response",
+                host_core::RpcRequest::ExtensionUiResponse,
                 json!({"id":"approval-1","confirmed":true}),
             )
             .await

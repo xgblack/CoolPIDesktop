@@ -91,7 +91,7 @@ async fn versioned_catalog_and_idle_task_reload() {
     );
     w.request(
         &task.id,
-        "prompt",
+        host_core::RpcRequest::Prompt,
         json!({"message":"Reply only OK. No tools."}),
     )
     .await
@@ -188,7 +188,7 @@ async fn discovered_model_matches_new_task_and_failed_switch_preserves_selection
         );
         let state = worker
             .runtime
-            .query(&task.id, "get_state", json!({}))
+            .query(&task.id, host_core::RpcQuery::GetState, json!({}))
             .await
             .unwrap();
         assert_eq!(state["model"]["provider"], provider);

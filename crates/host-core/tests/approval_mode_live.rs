@@ -3,9 +3,13 @@ use serde_json::json;
 use std::time::Duration;
 
 async fn turn(w: &Workbench, id: &str, message: &str) -> usize {
-    w.request(id, "prompt", json!({"message":message}))
-        .await
-        .unwrap();
+    w.request(
+        id,
+        host_core::RpcRequest::Prompt,
+        json!({"message":message}),
+    )
+    .await
+    .unwrap();
     tokio::time::timeout(Duration::from_secs(120), async {
         let mut approvals = 0;
         loop {
@@ -29,7 +33,7 @@ async fn turn(w: &Workbench, id: &str, message: &str) -> usize {
                         .unwrap_or_else(|| panic!("No allow-once option: {}", ui["options"]));
                     json!({"id":ui["id"],"value":option})
                 };
-                w.request(id, "extension_ui_response", response)
+                w.request(id, host_core::RpcRequest::ExtensionUiResponse, response)
                     .await
                     .unwrap();
                 approvals += 1;

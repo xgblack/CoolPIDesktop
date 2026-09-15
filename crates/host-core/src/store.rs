@@ -162,7 +162,7 @@ impl Store {
             connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(db)?;
             connection.execute_batch("PRAGMA foreign_keys=ON;").map_err(db)?;
             let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(db)?;
-            if version > 4 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
+            if version > 5 { return Err(HostError::new("database_version_unsupported", format!("Unsupported schema {version}"))); }
             if version == 0 {
                 let tx = connection.transaction().map_err(db)?;
                 tx.execute_batch("CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,roots TEXT NOT NULL,original_roots TEXT NOT NULL,trusted INTEGER NOT NULL,archived INTEGER NOT NULL DEFAULT 0);
@@ -198,6 +198,61 @@ impl Store {
             if version < 4 {
                 let tx = connection.transaction().map_err(db)?;
                 tx.execute_batch("CREATE TABLE attachments(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),name TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,created_at INTEGER NOT NULL,content BLOB NOT NULL); CREATE INDEX attachments_task ON attachments(task_id); PRAGMA user_version=4;").map_err(db)?;
+                tx.commit().map_err(db)?;
+            }
+            if version < 5 {
+                let tx = connection.transaction().map_err(db)?;
+                tx.execute_batch("CREATE TABLE session_catalog(
+                        session_key TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        session_file TEXT NOT NULL UNIQUE,
+                        source_root TEXT NOT NULL,
+                        cwd TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        model_provider TEXT,
+                        model_id TEXT,
+                        parent_session TEXT,
+                        relation_kind TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        message_count INTEGER NOT NULL DEFAULT 0,
+                        total_tokens INTEGER,
+                        cost REAL,
+                        trusted INTEGER NOT NULL DEFAULT 0,
+                        project_id TEXT,
+                        file_size INTEGER NOT NULL,
+                        file_mtime INTEGER NOT NULL,
+                        parse_state TEXT NOT NULL,
+                        parse_error_code TEXT
+                    );
+                    CREATE INDEX session_catalog_activity ON session_catalog(updated_at DESC,session_key);
+                    CREATE INDEX session_catalog_project ON session_catalog(project_id,updated_at DESC);
+                    CREATE INDEX session_catalog_parent ON session_catalog(parent_session);
+                    CREATE TABLE session_relations(
+                        parent_key TEXT NOT NULL,
+                        child_key TEXT NOT NULL,
+                        relation_kind TEXT NOT NULL,
+                        discovered_at INTEGER NOT NULL,
+                        PRIMARY KEY(parent_key,child_key)
+                    );
+                    CREATE INDEX session_relations_child ON session_relations(child_key);
+                    CREATE VIRTUAL TABLE session_search_docs USING fts5(
+                        session_key UNINDEXED,
+                        entry_id UNINDEXED,
+                        role UNINDEXED,
+                        content,
+                        tokenize='unicode61 remove_diacritics 2'
+                    );
+                    CREATE TABLE session_views(
+                        session_key TEXT PRIMARY KEY,
+                        last_seen_entry_id TEXT,
+                        last_seen_at INTEGER,
+                        scroll_anchor_entry_id TEXT,
+                        scroll_anchor_offset REAL,
+                        archived_at INTEGER
+                    );
+                    PRAGMA user_version=5;").map_err(db)?;
                 tx.commit().map_err(db)?;
             }
             connection.execute("UPDATE task_runs SET state='interrupted',error_code='host_interrupted',ended_at=?1 WHERE ended_at IS NULL", [now()]).map_err(db)?;
