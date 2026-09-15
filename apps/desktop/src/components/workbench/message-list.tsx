@@ -26,6 +26,8 @@ interface MessageListProps {
   onError: (error: unknown) => void;
   onQuote?: (text:string) => void;
   thinkingExpanded?:boolean;
+  /** Display name reported by the active OMP session (never inferred from content). */
+  modelLabel?: string;
 }
 
 function plainText(children: ReactNode): string {
@@ -33,22 +35,22 @@ function plainText(children: ReactNode): string {
     ? plainText(child.props.children) : typeof child === 'string' || typeof child === 'number' ? String(child) : '').join('');
 }
 
-function CodeBlock({ children, onError }: { children: ReactNode; onError: MessageListProps['onError'] }) {
+function CodeBlock({ code, lang, onError }: { code: string; lang?: string; onError: MessageListProps['onError'] }) {
   const [copied, setCopied] = useState(false);
-  const code = plainText(children);
   async function copy() {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
     } catch (error) { onError(error); }
   }
-  return <div className="my-3 min-w-0 overflow-hidden rounded-md border border-border bg-muted/50">
-    <div className="flex items-center justify-between border-b border-border px-3 py-1 text-xs text-muted-foreground">
-      <span>代码</span><Button variant="ghost" size="sm" onClick={() => void copy()} aria-label={copied ? '已复制代码' : '复制代码'}>
+  const lines = code.split('\n');
+  return <div className="message-code-block">
+    <div className="message-code-header">
+      <span className="message-code-language">{lang || 'text'}</span><Button variant="ghost" size="sm" onClick={() => void copy()} aria-label={copied ? '已复制代码' : '复制代码'}>
         {copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}
       </Button>
     </div>
-    <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed [&_code]:!bg-transparent [&_code]:!p-0">{children}</pre>
+    <pre className="message-code-pre"><code>{lines.map((line, index) => <span className="message-code-line" key={index}><span className="message-code-number" aria-hidden="true">{index + 1}</span><span className="message-code-text">{line || ' '}</span></span>)}</code></pre>
   </div>;
 }
 
@@ -59,11 +61,23 @@ function safeUrl(value: string): string | undefined {
   } catch { return undefined; }
 }
 
+function safeImageUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/.test(value)) return value;
+  return undefined;
+}
+
 const markdownRemarkPlugins = [remarkGfm];
 
 export const Markdown=memo(function Markdown({ text, onError }: { text: string; onError: MessageListProps['onError'] }) {
   const components = useMemo(() => ({
-    pre: ({ children }: { children?: ReactNode }) => <CodeBlock onError={onError}>{children}</CodeBlock>,
+    pre: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    code: ({ className, children }: { className?: string; children?: ReactNode }) => {
+      const raw = plainText(children);
+      const lang = className?.replace(/^language-/, '').trim();
+      if (className || raw.includes('\n')) return <CodeBlock code={raw.replace(/\n$/, '') + (raw.endsWith('\n') ? '\n' : '')} lang={lang} onError={onError}/>;
+      return <code className="message-inline-code">{children}</code>;
+    },
     a: ({ href, children }: { href?: string; children?: ReactNode }) => {
       const url = href && safeUrl(href);
       return url ? <a className="message-link focus-visible:outline-2 focus-visible:outline-ring" href={url}
@@ -71,13 +85,39 @@ export const Markdown=memo(function Markdown({ text, onError }: { text: string; 
         onAuxClick={event => { event.preventDefault(); if (event.button === 1) void invoke('open_external_link', { url }).catch(onError); }}
         onContextMenu={event => event.preventDefault()}>{children}</a> : <span>{children}</span>;
     },
-    img: ({ alt }: { alt?: string }) => <span className="text-xs text-muted-foreground">[图片未加载{alt ? `：${alt}` : ''}]</span>,
+    img: ({ src, alt }: { src?: string; alt?: string }) => {
+      const image = safeImageUrl(src);
+      return image ? <figure className="message-image"><img src={image} alt={alt ?? '会话图片'} loading="lazy"/><figcaption>{alt || '会话图片'}</figcaption></figure>
+        : <span className="message-image-placeholder">图片不可用（仅支持会话内图片）{alt ? `：${alt}` : ''}</span>;
+    },
     table: ({ children }: { children?: ReactNode }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left text-xs [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_td]:border [&_td]:border-border [&_td]:p-2">{children}</table></div>,
   }), [onError]);
-  return <div className="min-w-0 break-words text-sm leading-relaxed [overflow-wrap:anywhere] [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_h1]:my-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:my-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:my-3 [&_h3]:font-semibold [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs [&_hr]:my-4 [&_hr]:border-border">
-    <ReactMarkdown remarkPlugins={markdownRemarkPlugins} skipHtml urlTransform={url => safeUrl(url) ?? ''} components={components}>{text}</ReactMarkdown>
+  return <div className="message-markdown">
+    <ReactMarkdown remarkPlugins={markdownRemarkPlugins} skipHtml urlTransform={url => safeUrl(url) ?? safeImageUrl(url) ?? ''} components={components}>{text}</ReactMarkdown>
   </div>;
 },(a,b)=>a.text===b.text);
+
+function imageSource(block: Record<string, unknown>): string | undefined {
+  const source = block.source;
+  if (source && typeof source === 'object') {
+    const value = source as Record<string, unknown>;
+    if (value.type === 'base64' && typeof value.data === 'string' && typeof value.media_type === 'string') {
+      return `data:${value.media_type};base64,${value.data}`;
+    }
+    return undefined;
+  }
+  if (typeof block.data === 'string' && typeof block.mimeType === 'string' && /^image\/(png|jpeg|gif|webp)$/.test(block.mimeType)) {
+    return `data:${block.mimeType};base64,${block.data}`;
+  }
+  return undefined;
+}
+
+function ImageBlock({ block }: { block: Record<string, unknown> }) {
+  const src = imageSource(block);
+  const alt = typeof block.alt === 'string' ? block.alt : '会话图片';
+  if (!src) return <span className="message-image-placeholder">图片不可用（仅支持会话内图片）</span>;
+  return <figure className="message-image"><img src={src} alt={alt} loading="lazy" onError={event => { event.currentTarget.hidden = true; }}/><figcaption>{alt}</figcaption></figure>;
+}
 
 const MessageContent=memo(function MessageContent({ message, results, onError, thinkingExpanded=false }: { message: Message; results?: Map<string,Message>; onError: MessageListProps['onError'];thinkingExpanded?:boolean }) {
   const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content }]
@@ -89,8 +129,8 @@ const MessageContent=memo(function MessageContent({ message, results, onError, t
       return <ActivityRow key={index} kind="thinking" preview={activitySummary(thought)} defaultOpen={thinkingExpanded}><Markdown text={thought} onError={onError}/></ActivityRow>;
     }
     if (typeof block.text === 'string') return <Markdown key={index} text={block.text} onError={onError} />;
-    if (block.type === 'image') return <p key={index} className="my-2 text-xs text-muted-foreground">[图片未加载]</p>;
-    if (block.type === 'toolCall' || block.type === 'tool_use') {const result=results?.get(String(block.id??''));return <ActivityRow key={index} name={String(block.name??'工具')} state={result?((result as Message & {isError?:boolean}).isError?'failed':'succeeded'):undefined} preview={activitySummary(block.arguments??block.input)}><pre>{JSON.stringify(block.arguments??block.input??{},null,2)}</pre>{result&&<MessageContent message={result} onError={onError}/>}</ActivityRow>;}
+    if (block.type === 'image') return <ImageBlock key={index} block={block}/>;
+    if (block.type === 'toolCall' || block.type === 'tool_use') {const result=results?.get(String(block.id??''));return <ActivityRow key={index} name={String(block.name??'工具')} state={result?((result as Message & {isError?:boolean}).isError?'failed':'succeeded'):undefined} preview={activitySummary(block.arguments??block.input)}><div className="activity-section activity-arguments"><div className="activity-section-label">参数</div><pre>{JSON.stringify(block.arguments??block.input??{},null,2)}</pre></div>{result&&<div className="activity-section activity-result"><div className="activity-section-label">结果</div><MessageContent message={result} onError={onError}/></div>}</ActivityRow>;}
     return <pre key={index} className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs text-muted-foreground">{JSON.stringify(block.value ?? block, null, 2)}</pre>;
   })}</>;
 },(a,b)=>a.message===b.message&&a.results===b.results&&a.thinkingExpanded===b.thinkingExpanded);
@@ -184,7 +224,12 @@ const StreamingAnswer=memo(function StreamingAnswer({text,complete,onError}:{tex
  return <div className="assistant-markdown-renderer">{complete ? <Markdown text={text} onError={onError}/> : <StreamingMarkdown text={text} onError={onError}/>}</div>;
 },(a,b)=>a.text===b.text&&a.complete===b.complete);
 
-export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, onQuote, thinkingExpanded=false, startedAt, onFork, forkDisabled }: MessageListProps) {
+function messageTime(timestamp?: number): string | undefined {
+  if (timestamp === undefined || !Number.isFinite(timestamp)) return undefined;
+  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+export function MessageList({ taskKey, tools=[], messages, streamingText, running, hasMore, loading, onMore, query='', onError, onQuote, thinkingExpanded=false, startedAt, onFork, forkDisabled, modelLabel }: MessageListProps) {
   const viewport = useRef<HTMLDivElement>(null);
   const bottom = useRef(true);
   const previous = useRef({ taskKey, first: messages[0], height: 0 });
@@ -251,16 +296,16 @@ export function MessageList({ taskKey, tools=[], messages, streamingText, runnin
         {hasMore && <div className="conversation-search"><Button variant="outline" size="sm" disabled={loading || running} onClick={onMore}>{loading ? '正在加载…' : '加载更多消息'}</Button></div>}
         {loading && messages.length === 0 && <div role="status" className="space-y-3 py-6"><span className="text-xs text-muted-foreground">正在加载历史…</span><div className="h-4 w-2/3 rounded bg-muted" /><div className="h-4 w-4/5 rounded bg-muted" /></div>}
         {!loading && messages.length === 0 && !liveText && <div className="py-16 text-center"><p className="text-sm font-medium">从一个问题开始</p><p className="mt-2 text-xs text-muted-foreground">加载会话后，在下方输入任务或问题。</p></div>}
-        {transcript.map((item,index)=>item.user?<article key={index} data-chat-turn={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div></article>:<section key={`${taskKey}:${item.prompt?.timestamp??index}`} data-chat-turn={index} className="assistant-turn">
-          {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>{turnMetadata(item.original,item.prompt).durationMs === undefined?`执行过程 · ${item.activity.length}项`:`已执行 · ${item.activity.length}项 · ${durationLabel(turnMetadata(item.original,item.prompt).durationMs!)}`}</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i}>{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError} thinkingExpanded={thinkingExpanded}/>}</div>)}</div></details>}
-          {item.answer.map((message,i)=><div key={i} className="assistant-body"><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></div>)}
+        {transcript.map((item,index)=>item.user?<article key={index} data-chat-turn={index} className="message-row message-user"><div className="user-bubble"><MessageContent message={item.user} onError={onError}/></div>{messageTime(item.user.timestamp)&&<time className="user-time" dateTime={new Date(item.user.timestamp!).toISOString()}>{messageTime(item.user.timestamp)}</time>}</article>:<section key={`${taskKey}:${item.prompt?.timestamp??index}`} data-chat-turn={index} className="assistant-turn">
+          {!!item.activity.length&&<details className="activity-group" open={normalized?true:undefined}><summary><span>{turnMetadata(item.original,item.prompt).durationMs === undefined?`执行过程 · ${item.activity.length}项`:`已执行 · ${item.activity.length}项 · ${durationLabel(turnMetadata(item.original,item.prompt).durationMs!)}`}</span><ArrowDown size={12}/></summary><div>{item.activity.map((message,i)=><div key={i} className="assistant-fragment">{message.role==='assistant'&&modelLabel&&<span className="assistant-model-label">{modelLabel}</span>}{message.role==='toolResult'||message.role==='tool'?<ActivityRow name={String((message as Message & {toolName?:string}).toolName??'工具输出')} state={(message as Message & {isError?:boolean}).isError?'failed':undefined}><div className="activity-section activity-result"><div className="activity-section-label">结果</div><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></div></ActivityRow>:message.role==='system'||message.role==='custom'?<ActivityRow kind="context" preview={activitySummary(message.content)}><MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></ActivityRow>:<MessageContent message={message} results={results} onError={onError} thinkingExpanded={thinkingExpanded}/>}</div>)}</div></details>}
+          {item.answer.map((message,i)=><div key={i} className="assistant-body assistant-fragment">{modelLabel&&<span className="assistant-model-label">{modelLabel}</span>}<MessageContent message={message} onError={onError} thinkingExpanded={thinkingExpanded}/></div>)}
           <TurnFooter messages={item.original} answers={item.answer} user={item.prompt} onFork={onFork} forkDisabled={forkDisabled||running||loading} onError={onError}/>
         </section>)}
         {normalized && !visibleMessages.length && !loading && <p className="py-8 text-center text-xs text-muted-foreground">没有匹配的消息</p>}
         {(running || liveText) && <section className="live-turn" aria-label="当前执行轮次" aria-busy={running}>
           {running ? <RunningClock startedAt={startedAt} itemCount={tools.length}/> : loading ? <span className="text-xs text-muted-foreground">正在同步…</span> : null}
           {running&&tools.length>0&&<details className="activity-group"><summary><span>执行详情</span><ArrowDown size={12}/></summary><div className="live-activities" aria-label="当前工具执行">{tools.map(tool=><ActivityRow key={tool.id} name={tool.name} preview={activitySummary(tool.args)} state={tool.status}><pre>{JSON.stringify({参数:tool.args,结果:tool.result},null,2)}</pre></ActivityRow>)}</div></details>}
-          {liveText && <div className="assistant-body"><StreamingAnswer text={liveText} complete={!running} onError={onError}/></div>}
+          {liveText && <div className="assistant-body assistant-fragment">{modelLabel&&<span className="assistant-model-label">{modelLabel}</span>}<StreamingAnswer text={liveText} complete={!running} onError={onError}/></div>}
         </section>}
       </div>
     </div>

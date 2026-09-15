@@ -20,6 +20,13 @@ describe('message rendering', () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('open_external_link', { url: 'https://example.com/docs' }));
   });
 
+  it('renders owned base64 images while keeping remote images blocked', () => {
+    const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=';
+    const { container } = render(<MessageList {...base} messages={[{ role: 'assistant', content: `![owned](${pixel})\n\n![remote](https://example.com/a.png)` }]} />);
+    expect(container.querySelectorAll('.message-image img')).toHaveLength(1);
+    expect(screen.getByText(/图片不可用/)).toBeTruthy();
+  });
+
   it('copies exact fenced code and folds thinking separately from the answer', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
